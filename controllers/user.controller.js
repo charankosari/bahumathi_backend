@@ -4,6 +4,7 @@ const sendJwtToken = require("../utils/sendJwtToken");
 const { OAuth2Client } = require("google-auth-library");
 const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
+const sendOtp = require("../libs/sms/sms");
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -62,13 +63,19 @@ exports.signup = asyncHandler(async (req, res, next) => {
       active: false,
     });
   }
+  // After saving the user (or updating OTP):
+  try {
+    await sendOtp(number, otp); // sends SMS
+  } catch (smsError) {
+    console.error("Failed to send OTP:", smsError.message);
+    // Optional: you can still respond successfully, or return error
+  }
 
   // Example: await sendOtpSms(number, otp);
   console.log(`OTP for ${number}: ${otp}`);
   res.status(200).json({
     success: true,
     message: "OTP has been sent. Please verify to continue.",
-    otpForTesting: otp,
   });
 });
 
@@ -94,11 +101,17 @@ exports.login = asyncHandler(async (req, res, next) => {
   user.otp = await hashOtp(otp);
   user.otpExpires = Date.now() + 10 * 60 * 1000;
   await user.save({ validateBeforeSave: false });
-  console.log(`OTP for ${number}: ${otp}`);
+  // After saving the user (or updating OTP):
+  try {
+    await sendOtp(number, otp); // sends SMS
+  } catch (smsError) {
+    console.error("Failed to send OTP:", smsError.message);
+    // Optional: you can still respond successfully, or return error
+  }
+
   res.status(200).json({
     success: true,
     message: "OTP sent successfully. Please verify to log in.",
-    otpForTesting: otp,
   });
 });
 
