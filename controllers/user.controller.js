@@ -64,7 +64,7 @@ exports.signup = asyncHandler(async (req, res, next) => {
   }
 
   // Example: await sendOtpSms(number, otp);
-
+  console.log(`OTP for ${number}: ${otp}`);
   res.status(200).json({
     success: true,
     message: "OTP has been sent. Please verify to continue.",
@@ -94,7 +94,7 @@ exports.login = asyncHandler(async (req, res, next) => {
   user.otp = await hashOtp(otp);
   user.otpExpires = Date.now() + 10 * 60 * 1000;
   await user.save({ validateBeforeSave: false });
-
+  console.log(`OTP for ${number}: ${otp}`);
   res.status(200).json({
     success: true,
     message: "OTP sent successfully. Please verify to log in.",
