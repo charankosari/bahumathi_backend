@@ -189,18 +189,169 @@ exports.googleAuth = asyncHandler(async (req, res, next) => {
   let user = await User.findOne({ email });
 
   if (!user) {
+    // New user - create inactive account, needs mobile verification
     user = await User.create({
       fullName: name,
       email,
-      active: true,
+      active: false,
     });
+
+    // Don't send JWT token yet - user needs mobile verification
+    res.status(200).json({
+      success: true,
+      login: false,
+      message:
+        "Google authentication successful. Please verify your mobile number to complete registration.",
+      user: {
+        id: user._id,
+        fullName: user.fullName,
+        email: user.email,
+        active: user.active,
+      },
+    });
+  } else if (user.active && user.number) {
+    sendJwtToken(user, 200, "Google login successful", res);
   } else if (!user.active) {
-    user.active = true;
-    await user.save({ validateBeforeSave: false });
+    res.status(200).json({
+      success: true,
+      login: false,
+      message:
+        "Google authentication successful. Please verify your mobile number to complete registration.",
+      user: {
+        id: user._id,
+        fullName: user.fullName,
+        email: user.email,
+        active: user.active,
+      },
+    });
+  }
+});
+
+// ========== MOBILE VERIFICATION FOR GOOGLE AUTH ==========
+exports.verifyMobileForGoogleAuth = asyncHandler(async (req, res, next) => {
+  const { email, number } = req.body;
+
+  if (!email) {
+    const err = new Error("Email is required");
+    err.statusCode = 400;
+    return next(err);
   }
 
-  sendJwtToken(user, 200, "Google login successful", res);
+  if (!number) {
+    const err = new Error("Phone number is required");
+    err.statusCode = 400;
+    return next(err);
+  }
+
+  // Check if user exists with this email
+  let user = await User.findOne({ email });
+
+  if (!user) {
+    const err = new Error(
+      "User not found. Please complete Google authentication first."
+    );
+    err.statusCode = 404;
+    return next(err);
+  }
+
+  // Check if mobile number already exists with another user
+  const existingUserWithNumber = await User.findOne({
+    number,
+    _id: { $ne: user._id },
+  });
+
+  if (existingUserWithNumber) {
+    const err = new Error(
+      "This mobile number is already registered with another account. Please use a different number."
+    );
+    err.statusCode = 400;
+    return next(err);
+  }
+
+  // Generate OTP for mobile verification
+  const otp = generateOtp();
+  const hashedOtp = await hashOtp(otp);
+  const otpExpires = Date.now() + 10 * 60 * 1000;
+
+  // Update user with mobile number and OTP
+  user.number = number;
+  user.otp = hashedOtp;
+  user.otpExpires = otpExpires;
+  await user.save({ validateBeforeSave: false });
+
+  // Send OTP via SMS
+  try {
+    await sendOtp(number, otp);
+  } catch (smsError) {
+    console.error("Failed to send OTP:", smsError.message);
+  }
+
+  console.log(`OTP for ${number}: ${otp}`);
+
+  res.status(200).json({
+    success: true,
+    message:
+      "OTP has been sent to your mobile number. Please verify to complete registration.",
+  });
 });
+
+// ========== VERIFY MOBILE OTP FOR GOOGLE AUTH ==========
+exports.verifyMobileOtpForGoogleAuth = asyncHandler(async (req, res, next) => {
+  const { email, number, otp } = req.body;
+
+  if (!email) {
+    const err = new Error("Email is required");
+    err.statusCode = 400;
+    return next(err);
+  }
+
+  if (!number) {
+    const err = new Error("Phone number is required");
+    err.statusCode = 400;
+    return next(err);
+  }
+
+  if (!otp) {
+    const err = new Error("OTP is required");
+    err.statusCode = 400;
+    return next(err);
+  }
+
+  // Find user with email and number
+  const user = await User.findOne({
+    email,
+    number,
+    otpExpires: { $gt: Date.now() },
+  }).select("+otp");
+
+  if (!user) {
+    const err = new Error("Invalid credentials or OTP has expired");
+    err.statusCode = 400;
+    return next(err);
+  }
+
+  const isMatch = await user.compareOtp(otp);
+
+  if (!isMatch) {
+    const err = new Error("Invalid OTP");
+    err.statusCode = 400;
+    return next(err);
+  }
+
+  // Activate user and clear OTP
+  user.active = true;
+  user.otp = undefined;
+  user.otpExpires = undefined;
+  await user.save({ validateBeforeSave: false });
+
+  sendJwtToken(
+    user,
+    200,
+    "Mobile verification successful. Registration completed.",
+    res
+  );
+});
+
 exports.getUserDetails = asyncHandler(async (req, res, next) => {
   const userId = req.user.id;
 

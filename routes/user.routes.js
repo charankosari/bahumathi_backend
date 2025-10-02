@@ -10,6 +10,14 @@ router.route("/verify-otp").post(userController.verifyOtp);
 
 router.route("/google-auth").post(userController.googleAuth);
 
+router
+  .route("/verify-mobile-google")
+  .post(userController.verifyMobileForGoogleAuth);
+
+router
+  .route("/verify-mobile-otp-google")
+  .post(userController.verifyMobileOtpForGoogleAuth);
+
 router.route("/me").get(isAuthorized, userController.getUserDetails);
 router
   .route("/:id")
