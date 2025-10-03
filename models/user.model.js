@@ -17,6 +17,11 @@ const userSchema = new mongoose.Schema({
       "Please add a valid email",
     ],
   },
+
+  image: {
+    type: String,
+    sparse: true,
+  },
   number: {
     type: String,
     unique: true,

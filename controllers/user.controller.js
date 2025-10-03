@@ -184,8 +184,7 @@ exports.googleAuth = asyncHandler(async (req, res, next) => {
   }
 
   const payload = ticket.getPayload();
-  const { email, name } = payload;
-
+  const { email, name, picture } = payload;
   let user = await User.findOne({ email });
 
   if (!user) {
@@ -193,6 +192,7 @@ exports.googleAuth = asyncHandler(async (req, res, next) => {
     user = await User.create({
       fullName: name,
       email,
+      image: picture,
       active: false,
     });
 
