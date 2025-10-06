@@ -1,5 +1,7 @@
-const app = require("./app");
 const { config } = require("dotenv");
+config();
+
+const app = require("./app");
 const connectDatabase = require("./config/database");
 const { createServer } = require("http");
 const { Server } = require("socket.io");
@@ -11,9 +13,9 @@ process.on("uncaughtException", (err) => {
   console.log("shutting down the server due to uncaught error...........");
   process.exit(1);
 });
-config();
 connectDatabase();
-
+console.log(process.env.ENCRYPTION_KEY);
+console.log(process.env.DB_URI);
 // Create HTTP server
 const httpServer = createServer(app);
 

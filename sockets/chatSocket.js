@@ -1,4 +1,4 @@
-// sockets/chatSocket.js
+const { encrypt } = require("../utils/crypto.util"); // ✨ IMPORT a
 const Message = require("../models/Message");
 const Gift = require("../models/Gift");
 const Conversation = require("../models/Conversation");
@@ -17,60 +17,61 @@ function initChatSocket(io) {
       console.log(`User ${userId} is online.`);
     });
 
-    // 2. Handle sending messages (REVISED LOGIC)
+    // 2. Handle sending messages with encryption
     socket.on("sendMessage", async (data, callback) => {
       try {
         const { senderId, receiverId, type, content, mediaUrl, giftId } = data;
 
-        // --- START: REVISED CONVERSATION LOGIC ---
-
-        // Step 1: Try to find the conversation.
+        // --- CONVERSATION LOGIC ---
         let conversation = await Conversation.findOne({
           participants: { $all: [senderId, receiverId] },
         });
 
-        // Step 2: If no conversation exists, create a new one.
         if (!conversation) {
           conversation = await Conversation.create({
             participants: [senderId, receiverId],
           });
         }
 
-        // Step 3: Update the conversation with the latest message details.
+        // Encrypt the 'lastMessage' text before saving it to the conversation
         conversation.lastMessage = {
-          text: type === "gift" ? "🎁 Gift" : content,
+          text: type === "gift" ? "🎁 Gift" : encrypt(content),
           sender: senderId,
         };
         conversation.lastMessageType = type;
 
-        // Mongoose 6+ handles Map updates more easily.
-        // Get the current count, default to 0, then increment.
         const currentUnread = conversation.unreadCounts.get(receiverId) || 0;
         conversation.unreadCounts.set(receiverId, currentUnread + 1);
-
-        // Save the updated conversation
         await conversation.save();
+        // --- END CONVERSATION LOGIC ---
 
-        // --- END: REVISED CONVERSATION LOGIC ---
-
+        // Create the new message, encrypting the content for database storage
         const newMessage = await Message.create({
           conversationId: conversation._id,
           senderId,
           receiverId,
           type,
-          content,
+          content: type === "text" ? encrypt(content) : content, // Encrypt here
           mediaUrl,
           giftId,
         });
 
-        // Emit to receiver's room
+        // IMPORTANT: For the real-time event, we create a temporary object
+        // with the ORIGINAL, UNENCRYPTED content for the best user experience.
+        const unencryptedMessageForSocket = {
+          ...newMessage.toObject(),
+          content: content, // Use original content for the live message
+        };
+
+        // Emit the unencrypted message to the receiver's room
         io.to(receiverId).emit("receiveMessage", {
-          message: newMessage,
+          message: unencryptedMessageForSocket,
           conversation,
         });
 
-        // Acknowledge to the sender that the message was sent
-        if (callback) callback({ success: true, message: newMessage });
+        // Acknowledge to the sender with the unencrypted message
+        if (callback)
+          callback({ success: true, message: unencryptedMessageForSocket });
       } catch (err) {
         console.error("Error sending message:", err.message);
         if (callback) callback({ success: false, error: err.message });
@@ -85,12 +86,10 @@ function initChatSocket(io) {
           { $set: { isRead: true } }
         );
 
-        // Reset unread count for the user in that conversation
-        const conversation = await Conversation.findById(conversationId);
-        if (conversation) {
-          conversation.unreadCounts.set(userId, 0);
-          await conversation.save();
-        }
+        await Conversation.updateOne(
+          { _id: conversationId },
+          { $set: { [`unreadCounts.${userId}`]: 0 } }
+        );
       } catch (err) {
         console.error("Error marking as read:", err.message);
       }
@@ -105,7 +104,7 @@ function initChatSocket(io) {
       io.to(receiverId).emit("userStoppedTyping", { conversationId });
     });
 
-    // Your allotGift logic
+    // Your allotGift logic (remains unchanged)
     socket.on("allotGift", async ({ giftId, userId, chosenType }) => {
       try {
         const gift = await Gift.findOneAndUpdate(
