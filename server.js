@@ -8,6 +8,7 @@ const { Server } = require("socket.io");
 const { initChatSocket } = require("./sockets/chatSocket");
 const redisAdapter = require("@socket.io/redis-adapter");
 const { createClient } = require("redis");
+const jwt = require("jsonwebtoken");
 process.on("uncaughtException", (err) => {
   console.log(`Error: ${err.message}`);
   console.log("shutting down the server due to uncaught error...........");
@@ -25,6 +26,22 @@ const io = new Server(httpServer, {
     origin: "*", // restrict this in production
     methods: ["GET", "POST"],
   },
+});
+io.use((socket, next) => {
+  const token = socket.handshake.auth.token;
+
+  if (!token) {
+    return next(new Error("Authentication error: Token not provided."));
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    // Attach the user to the socket object for future use
+    socket.user = decoded;
+    next();
+  } catch (err) {
+    return next(new Error("Authentication error: Invalid token."));
+  }
 });
 
 // Redis adapter for scaling (optional)

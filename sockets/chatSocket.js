@@ -1,4 +1,4 @@
-const { encrypt } = require("../utils/crypto.util"); // ✨ IMPORT a
+const { encrypt } = require("../utils/crypto.util");
 const Message = require("../models/Message");
 const Gift = require("../models/Gift");
 const Conversation = require("../models/Conversation");
@@ -7,69 +7,75 @@ function initChatSocket(io) {
   const onlineUsers = new Map(); // Tracks userId -> socketId
 
   io.on("connection", (socket) => {
-    console.log("New user connected:", socket.id);
+    // The 'socket.user' object is attached by the JWT middleware in server.js
+    if (!socket.user || !socket.user.id) {
+      console.error(
+        "Connection rejected: No user authenticated for this socket."
+      );
+      return socket.disconnect();
+    }
+
+    console.log("New user connected:", socket.id, "| UserID:", socket.user.id);
 
     // 1. Handle user going online
-    socket.on("goOnline", (userId) => {
-      socket.join(userId); // Join personal room for notifications
+    socket.on("goOnline", () => {
+      const userId = socket.user.id;
+      socket.join(userId); // Join this user to a room named after their ID
       onlineUsers.set(userId, socket.id);
       socket.broadcast.emit("userOnline", userId);
       console.log(`User ${userId} is online.`);
     });
 
-    // 2. Handle sending messages with encryption
+    // 2. Handle sending messages (securely)
     socket.on("sendMessage", async (data, callback) => {
       try {
-        const { senderId, receiverId, type, content, mediaUrl, giftId } = data;
+        // ✨ SENDER ID IS NOW TRUSTED, TAKEN FROM THE AUTHENTICATED SOCKET
+        const senderId = socket.user.id;
+
+        // The client only needs to send the receiver and content
+        const { receiverId, type, content, mediaUrl, giftId } = data;
 
         // --- CONVERSATION LOGIC ---
         let conversation = await Conversation.findOne({
           participants: { $all: [senderId, receiverId] },
         });
-
         if (!conversation) {
           conversation = await Conversation.create({
             participants: [senderId, receiverId],
           });
         }
 
-        // Encrypt the 'lastMessage' text before saving it to the conversation
         conversation.lastMessage = {
           text: type === "gift" ? "🎁 Gift" : encrypt(content),
           sender: senderId,
         };
         conversation.lastMessageType = type;
-
         const currentUnread = conversation.unreadCounts.get(receiverId) || 0;
         conversation.unreadCounts.set(receiverId, currentUnread + 1);
         await conversation.save();
-        // --- END CONVERSATION LOGIC ---
 
-        // Create the new message, encrypting the content for database storage
+        // --- MESSAGE CREATION ---
         const newMessage = await Message.create({
           conversationId: conversation._id,
-          senderId,
+          senderId, // Using the trusted senderId
           receiverId,
           type,
-          content: type === "text" ? encrypt(content) : content, // Encrypt here
+          content: type === "text" ? encrypt(content) : content,
           mediaUrl,
           giftId,
         });
 
-        // IMPORTANT: For the real-time event, we create a temporary object
-        // with the ORIGINAL, UNENCRYPTED content for the best user experience.
+        // Create a temporary object with the original, unencrypted content for the live socket event
         const unencryptedMessageForSocket = {
           ...newMessage.toObject(),
-          content: content, // Use original content for the live message
+          content: content,
         };
 
-        // Emit the unencrypted message to the receiver's room
         io.to(receiverId).emit("receiveMessage", {
           message: unencryptedMessageForSocket,
           conversation,
         });
 
-        // Acknowledge to the sender with the unencrypted message
         if (callback)
           callback({ success: true, message: unencryptedMessageForSocket });
       } catch (err) {
@@ -78,9 +84,10 @@ function initChatSocket(io) {
       }
     });
 
-    // 3. Handle read receipts
-    socket.on("markAsRead", async ({ userId, conversationId }) => {
+    // 3. Handle read receipts (securely)
+    socket.on("markAsRead", async ({ conversationId }) => {
       try {
+        const userId = socket.user.id; // Use trusted user ID
         await Message.updateMany(
           { conversationId, receiverId: userId, isRead: false },
           { $set: { isRead: true } }
@@ -96,17 +103,18 @@ function initChatSocket(io) {
     });
 
     // 4. Handle typing indicators
-    socket.on("typing", ({ conversationId, receiverId }) => {
-      io.to(receiverId).emit("userTyping", { conversationId });
+    socket.on("typing", ({ receiverId }) => {
+      io.to(receiverId).emit("userTyping", { senderId: socket.user.id });
     });
 
-    socket.on("stopTyping", ({ conversationId, receiverId }) => {
-      io.to(receiverId).emit("userStoppedTyping", { conversationId });
+    socket.on("stopTyping", ({ receiverId }) => {
+      io.to(receiverId).emit("userStoppedTyping", { senderId: socket.user.id });
     });
 
-    // Your allotGift logic (remains unchanged)
-    socket.on("allotGift", async ({ giftId, userId, chosenType }) => {
+    // 5. Handle gift allotment (securely)
+    socket.on("allotGift", async ({ giftId, chosenType }) => {
       try {
+        const userId = socket.user.id; // Use trusted user ID
         const gift = await Gift.findOneAndUpdate(
           { _id: giftId, receiverId: userId, isAllotted: false },
           {
@@ -128,15 +136,13 @@ function initChatSocket(io) {
       }
     });
 
-    // Handle user disconnection
+    // 6. Handle user disconnection
     socket.on("disconnect", () => {
-      for (let [userId, sockId] of onlineUsers.entries()) {
-        if (sockId === socket.id) {
-          onlineUsers.delete(userId);
-          socket.broadcast.emit("userOffline", userId);
-          console.log(`User ${userId} went offline.`);
-          break;
-        }
+      const userId = socket.user.id;
+      if (userId) {
+        onlineUsers.delete(userId);
+        socket.broadcast.emit("userOffline", userId);
+        console.log(`User ${userId} went offline.`);
       }
       console.log("User disconnected:", socket.id);
     });
