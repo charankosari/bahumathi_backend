@@ -17,6 +17,7 @@ const messageSchema = new mongoose.Schema(
     mediaUrl: { type: String },
     giftId: { type: mongoose.Schema.Types.ObjectId, ref: "Gift" },
     isRead: { type: Boolean, default: false },
+    metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
   },
   { timestamps: true }
 );

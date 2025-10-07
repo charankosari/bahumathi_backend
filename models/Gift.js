@@ -2,42 +2,52 @@ const mongoose = require("mongoose");
 
 const giftSchema = new mongoose.Schema(
   {
-    // Who sent the gift
     senderId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
     },
-
-    // Who received the gift
     receiverId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
     },
-
-    // Original gift type
-    type: { type: String, enum: ["gold", "stock"], required: true },
-
-    // Gift details
-    name: { type: String }, // stock name or gold
-    amount: { type: Number, required: true },
-    icon: { type: String },
-
-    // Whether it’s self-sent (optional case)
     isSelfGift: { type: Boolean, default: false },
 
-    // Allocation status
-    isAllotted: { type: Boolean, default: false }, // true when receiver converts
+    type: { type: String, enum: ["gold", "stock"], required: true },
+    name: { type: String }, // e.g. TCS, Gold 24K
+    icon: { type: String },
+
+    valueInINR: { type: Number, required: true },
+    quantity: { type: Number, required: true },
+    pricePerUnitAtGift: { type: Number, required: true },
+    currentPricePerUnit: { type: Number, default: null },
+
+    status: {
+      type: String,
+      enum: ["pending", "accepted", "allotted", "expired", "cancelled"],
+      default: "pending",
+    },
+
+    isAllotted: { type: Boolean, default: false },
     allottedAt: { type: Date, default: null },
-
-    // Receiver’s chosen conversion type (after allotment)
     convertedTo: { type: String, enum: ["gold", "stock", null], default: null },
-
-    // Hidden from sender after allocation
     hiddenFromSender: { type: Boolean, default: false },
 
-    // References to conversation/message if applicable
+    conversionDetails: {
+      fromType: { type: String, enum: ["gold", "stock"] },
+      toType: { type: String, enum: ["gold", "stock"] },
+      conversionRate: { type: Number },
+      convertedQuantity: { type: Number },
+    },
+
+    transactionRef: { type: String, default: null },
+    provider: {
+      type: String,
+      enum: ["Augmont", "Zerodha", "Groww", "Kuvera", null],
+      default: null,
+    },
+
     messageId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Message",
@@ -48,6 +58,9 @@ const giftSchema = new mongoose.Schema(
       ref: "Conversation",
       default: null,
     },
+
+    note: { type: String },
+    isViewedByReceiver: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
