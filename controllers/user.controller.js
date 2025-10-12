@@ -447,13 +447,11 @@ exports.getFriends = asyncHandler(async (req, res, next) => {
     if (rawNumber === null || rawNumber === undefined) return null;
 
     const str = String(rawNumber);
-
     const digits = str.replace(/\D/g, "");
 
     if (digits.length >= 10) {
       return digits.slice(-10);
     }
-
     return null;
   };
 
@@ -467,8 +465,25 @@ exports.getFriends = asyncHandler(async (req, res, next) => {
     return next(err);
   }
 
+  // Exclude the logged-in user's number if present
+  // const currentUserNumber = normalizePhoneNumber(req.user?.number);
+  const user = await User.findById(req.user.id);
+  const currentUserNumber = user.number;
+  const filteredNumbers = normalizedNumbers.filter(
+    (num) => num !== currentUserNumber
+  );
+
+  // If after filtering nothing remains, return empty
+  if (filteredNumbers.length === 0) {
+    return res.status(200).json({
+      success: true,
+      count: 0,
+      users: [],
+    });
+  }
+
   const users = await User.find({
-    number: { $in: normalizedNumbers },
+    number: { $in: filteredNumbers },
     active: true,
   });
 
@@ -478,6 +493,7 @@ exports.getFriends = asyncHandler(async (req, res, next) => {
     users,
   });
 });
+
 // ========== GET USER BY _id OR PHONE NUMBER ==========
 exports.getUserByIdOrNumber = asyncHandler(async (req, res, next) => {
   const { value } = req.body;
