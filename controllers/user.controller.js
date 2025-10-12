@@ -504,15 +504,51 @@ exports.getUserByIdOrNumber = asyncHandler(async (req, res, next) => {
     return next(err);
   }
 
-  let user = null;
+  const normalizePhoneNumber = (rawNumber) => {
+    if (rawNumber === null || rawNumber === undefined) return null;
+    const str = String(rawNumber);
+    const digits = str.replace(/\D/g, "");
+    if (digits.length >= 10) return digits.slice(-10);
+    return null;
+  };
 
+  // Get current user's id/number from JWT (preferred) or fallback to DB if needed
+  const currentUserId = req.user?.id || req.user?._id || null;
+  let currentUserNumber = null;
+  if (req.user && req.user.number) {
+    currentUserNumber = normalizePhoneNumber(req.user.number);
+  } else if (currentUserId) {
+    const u = await User.findById(currentUserId).select("number");
+    if (u && u.number) currentUserNumber = normalizePhoneNumber(u.number);
+  }
+
+  // Determine whether value looks like an ObjectId
   const isObjectId = /^[0-9a-fA-F]{24}$/.test(value);
 
+  let user = null;
   if (isObjectId) {
+    // If user is searching for themselves by id, treat as not found
+    if (currentUserId && String(currentUserId) === String(value)) {
+      const err = new Error("User not found");
+      err.statusCode = 404;
+      return next(err);
+    }
+
     user = await User.findOne({ _id: value, active: true });
   } else {
-    const str = String(value);
-    const digits = str.replace(/\D/g, "").slice(-10);
+    // Normalize phone number and compare against current user's number
+    const digits = normalizePhoneNumber(value);
+    if (!digits) {
+      const err = new Error("Invalid phone number");
+      err.statusCode = 400;
+      return next(err);
+    }
+
+    if (currentUserNumber && digits === currentUserNumber) {
+      const err = new Error("User not found");
+      err.statusCode = 404;
+      return next(err);
+    }
 
     user = await User.findOne({ number: digits, active: true });
   }
