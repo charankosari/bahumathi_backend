@@ -478,3 +478,37 @@ exports.getFriends = asyncHandler(async (req, res, next) => {
     users,
   });
 });
+// ========== GET USER BY _id OR PHONE NUMBER ==========
+exports.getUserByIdOrNumber = asyncHandler(async (req, res, next) => {
+  const { value } = req.body;
+
+  if (!value) {
+    const err = new Error("User ID or phone number is required");
+    err.statusCode = 400;
+    return next(err);
+  }
+
+  let user = null;
+
+  const isObjectId = /^[0-9a-fA-F]{24}$/.test(value);
+
+  if (isObjectId) {
+    user = await User.findOne({ _id: value, active: true });
+  } else {
+    const str = String(value);
+    const digits = str.replace(/\D/g, "").slice(-10);
+
+    user = await User.findOne({ number: digits, active: true });
+  }
+
+  if (!user) {
+    const err = new Error("User not found");
+    err.statusCode = 404;
+    return next(err);
+  }
+
+  res.status(200).json({
+    success: true,
+    user,
+  });
+});
