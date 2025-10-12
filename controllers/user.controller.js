@@ -5,6 +5,7 @@ const { OAuth2Client } = require("google-auth-library");
 const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const sendOtp = require("../libs/sms/sms");
+const Gift = require("../models/Gift");
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -562,5 +563,80 @@ exports.getUserByIdOrNumber = asyncHandler(async (req, res, next) => {
   res.status(200).json({
     success: true,
     user,
+  });
+});
+// ========== GET SUGGESTIONS & RECENTS FROM GIFTS ==========
+exports.getSuggestionsFromGifts = asyncHandler(async (req, res, next) => {
+  if (!req.user || !req.user.id) {
+    const err = new Error("Unauthorized");
+    err.statusCode = 401;
+    return next(err);
+  }
+
+  const userId = req.user.id;
+
+  // 1) Suggestions: users who SENT gifts to current user (receiverId === userId)
+  const suggestionsAgg = Gift.aggregate([
+    { $match: { receiverId: userId, isSelfGift: false } },
+    { $sort: { createdAt: -1 } },
+    {
+      $group: {
+        _id: "$senderId",
+        lastGift: { $first: "$$ROOT" },
+      },
+    },
+    { $limit: 5 },
+  ]);
+
+  // 2) Recents: users the current user SENT gifts to (senderId === userId)
+  const recentsAgg = Gift.aggregate([
+    { $match: { senderId: userId, isSelfGift: false } },
+    { $sort: { createdAt: -1 } },
+    {
+      $group: {
+        _id: "$receiverId",
+        lastGift: { $first: "$$ROOT" },
+      },
+    },
+    { $limit: 5 },
+  ]);
+
+  const [suggestionsRaw, recentsRaw] = await Promise.all([
+    suggestionsAgg.exec(),
+    recentsAgg.exec(),
+  ]);
+
+  // Extract user IDs and exclude current user
+  const suggestionIds = suggestionsRaw
+    .map((s) => s._id)
+    .filter((id) => String(id) !== String(userId));
+
+  const recentIds = recentsRaw
+    .map((r) => r._id)
+    .filter((id) => String(id) !== String(userId));
+
+  // Fetch full user documents (no projection)
+  const [suggestionUsers, recentUsers] = await Promise.all([
+    suggestionIds.length > 0
+      ? User.find({ _id: { $in: suggestionIds }, active: true })
+      : Promise.resolve([]),
+    recentIds.length > 0
+      ? User.find({ _id: { $in: recentIds }, active: true })
+      : Promise.resolve([]),
+  ]);
+
+  // Maintain order same as aggregation results (most recent first)
+  const orderUsers = (users, ids) => {
+    const map = new Map(users.map((u) => [String(u._id), u]));
+    return ids.map((id) => map.get(String(id))).filter(Boolean);
+  };
+
+  const suggestions = orderUsers(suggestionUsers, suggestionIds);
+  const recents = orderUsers(recentUsers, recentIds);
+
+  res.status(200).json({
+    success: true,
+    suggestions,
+    recents,
   });
 });

@@ -24,6 +24,9 @@ router
   .route("/me/find-friend")
   .post(isAuthorized, userController.getUserByIdOrNumber);
 router
+  .route("/me/recents")
+  .post(isAuthorized, userController.getSuggestionsFromGifts);
+router
   .route("/:id")
   .delete(isAuthorized, userController.deleteUser)
   .put(isAuthorized, userController.editUser);

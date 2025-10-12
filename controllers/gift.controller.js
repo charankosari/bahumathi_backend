@@ -1,5 +1,6 @@
 const { createOrder } = require("../libs/razorpay");
-const { Gift, Message } = require("../models");
+const Gift = require("../models/Gift");
+const Message = require("../models/Message");
 const { io } = require("../server");
 
 /**
