@@ -19,6 +19,7 @@ router
   .post(userController.verifyMobileOtpForGoogleAuth);
 
 router.route("/me").get(isAuthorized, userController.getUserDetails);
+router.route("/me/get-friends").post(isAuthorized, userController.getFriends);
 router
   .route("/:id")
   .delete(isAuthorized, userController.deleteUser)

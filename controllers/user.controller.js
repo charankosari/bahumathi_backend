@@ -433,3 +433,48 @@ exports.editUser = asyncHandler(async (req, res, next) => {
     user,
   });
 });
+// ========== SEARCH USERS BY PHONE NUMBERS ==========
+exports.getFriends = asyncHandler(async (req, res, next) => {
+  const { numbers } = req.body;
+
+  if (!numbers || !Array.isArray(numbers) || numbers.length === 0) {
+    const err = new Error("Phone numbers array is required");
+    err.statusCode = 400;
+    return next(err);
+  }
+
+  const normalizePhoneNumber = (rawNumber) => {
+    if (rawNumber === null || rawNumber === undefined) return null;
+
+    const str = String(rawNumber);
+
+    const digits = str.replace(/\D/g, "");
+
+    if (digits.length >= 10) {
+      return digits.slice(-10);
+    }
+
+    return null;
+  };
+
+  const normalizedNumbers = numbers
+    .map(normalizePhoneNumber)
+    .filter((num) => num && num.length === 10); // Only valid 10-digit numbers
+
+  if (normalizedNumbers.length === 0) {
+    const err = new Error("No valid phone numbers provided");
+    err.statusCode = 400;
+    return next(err);
+  }
+
+  const users = await User.find({
+    number: { $in: normalizedNumbers },
+    active: true,
+  });
+
+  res.status(200).json({
+    success: true,
+    count: users.length,
+    users,
+  });
+});
