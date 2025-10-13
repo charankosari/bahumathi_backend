@@ -16,6 +16,7 @@ app.get("/", (req, res) => {
 });
 
 app.use("/api/v1/users", require("./routes/user.routes"));
+app.use("/api/v1/uploads", require("./routes/upload.routes"));
 
 // Error handler middleware (MUST be last)
 app.use(errorMiddleware);
