@@ -121,3 +121,73 @@ exports.getMessagesForConversation = async (req, res, next) => {
     next(err);
   }
 };
+exports.getMessagesByUserId = async (req, res, next) => {
+  try {
+    const peerId = req.params.peerId || req.body.peerId;
+    const userId = req.user.id;
+
+    if (!peerId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "peerId is required" });
+    }
+
+    // Find the conversation between these two users
+    const conversation = await Conversation.findOne({
+      participants: { $all: [userId, peerId] },
+    });
+
+    if (!conversation) {
+      return res.status(404).json({
+        success: false,
+        message: "No conversation found between these users.",
+      });
+    }
+
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = 25;
+    const skip = (page - 1) * limit;
+
+    // Get last 25 messages for that conversation
+    const messages = await Message.find({ conversationId: conversation._id })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    // Decrypt + attach presigned media URLs
+    const decryptedMessages = await Promise.all(
+      messages.map(async (msg) => {
+        const messageObject = msg.toObject();
+
+        // decrypt text messages
+        if (messageObject.type === "text" && messageObject.content) {
+          try {
+            messageObject.content = decrypt(messageObject.content);
+          } catch {
+            messageObject.content = "[Encrypted Message]";
+          }
+        }
+
+        // media: fetch presigned url if type is image/voice
+        if (
+          messageObject.mediaUrl &&
+          ["image", "voice"].includes(messageObject.type)
+        ) {
+          const url = await fetchPresignedUrlForKey(messageObject.mediaUrl);
+          messageObject.media = url || null;
+        } else {
+          messageObject.media = null;
+        }
+
+        return messageObject;
+      })
+    );
+
+    res.status(200).json({
+      success: true,
+      messages: decryptedMessages.reverse(), // oldest → newest
+    });
+  } catch (err) {
+    next(err);
+  }
+};

@@ -31,8 +31,11 @@ router
   .route("/me/get-chats")
   .get(isAuthorized, conversationController.getConversations);
 router
-  .route("/me/get-current-chat/:conversationId")
+  .route("/me/get-current-chat/cid/:conversationId")
   .get(isAuthorized, conversationController.getMessagesForConversation);
+router
+  .route("/me/get-chat-with/pid/:peerId")
+  .post(isAuthorized, conversationController.getMessagesByUserId);
 router
   .route("/:id")
   .delete(isAuthorized, userController.deleteUser)
