@@ -1,34 +1,70 @@
+const axios = require("axios");
 const { decrypt } = require("../utils/crypto.util"); // ✨ IMPORT
 const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
 
-// Get all conversations for the logged-in user
+const UPLOADS_SERVICE_BASE = "http://localhost:4000";
+
+// Helper: get presigned URL from uploads service
+async function fetchPresignedUrlForKey(key) {
+  try {
+    const resp = await axios.get(
+      `${UPLOADS_SERVICE_BASE}/api/v1/uploads/getpresignedurl`,
+      { params: { key } }
+    );
+    return resp.data?.url || null; // your API gives { success:true, url:"..." }
+  } catch (err) {
+    console.error(`Failed to fetch presigned URL for key=${key}:`, err.message);
+    return null;
+  }
+}
+
 exports.getConversations = async (req, res, next) => {
   try {
     const conversations = await Conversation.find({ participants: req.user.id })
       .populate("participants", "name profilePic")
       .sort({ updatedAt: -1 });
 
-    // Decrypt the last message for each conversation
-    const decryptedConversations = conversations.map((convo) => {
-      const convoObject = convo.toObject();
-      if (convoObject.lastMessage && convoObject.lastMessageType === "text") {
-        try {
-          convoObject.lastMessage.text = decrypt(convoObject.lastMessage.text);
-        } catch (e) {
-          convoObject.lastMessage.text = "[Encrypted Message]";
+    // Decrypt + add presigned media if needed
+    const decryptedConversations = await Promise.all(
+      conversations.map(async (convo) => {
+        const convoObject = convo.toObject();
+
+        // Text message decryption
+        if (convoObject.lastMessage && convoObject.lastMessageType === "text") {
+          try {
+            convoObject.lastMessage.text = decrypt(
+              convoObject.lastMessage.text
+            );
+          } catch {
+            convoObject.lastMessage.text = "[Encrypted Message]";
+          }
         }
-      }
-      return convoObject;
-    });
+
+        // If lastMessage is media type → get presigned URL
+        if (
+          convoObject.lastMessage &&
+          convoObject.lastMessage.mediaUrl &&
+          ["image", "voice"].includes(convoObject.lastMessage.type)
+        ) {
+          const url = await fetchPresignedUrlForKey(
+            convoObject.lastMessage.mediaUrl
+          );
+          convoObject.lastMessage.media = url || null;
+        } else if (convoObject.lastMessage) {
+          convoObject.lastMessage.media = null;
+        }
+
+        return convoObject;
+      })
+    );
 
     res.status(200).json(decryptedConversations);
   } catch (err) {
     next(err);
   }
 };
-
-// Get messages for a specific conversation
+// -------------------- GET MESSAGES --------------------
 exports.getMessagesForConversation = async (req, res, next) => {
   try {
     const { conversationId } = req.params;
@@ -51,19 +87,34 @@ exports.getMessagesForConversation = async (req, res, next) => {
       .skip(skip)
       .limit(limit);
 
-    // Decrypt each message content
-    const decryptedMessages = messages.map((msg) => {
-      const messageObject = msg.toObject();
-      if (messageObject.type === "text" && messageObject.content) {
-        try {
-          messageObject.content = decrypt(messageObject.content);
-        } catch (e) {
-          console.error(`Failed to decrypt message ${messageObject._id}:`, e);
-          messageObject.content = "[Encrypted Message]";
+    // Decrypt + attach presigned media URLs
+    const decryptedMessages = await Promise.all(
+      messages.map(async (msg) => {
+        const messageObject = msg.toObject();
+
+        // decrypt text messages
+        if (messageObject.type === "text" && messageObject.content) {
+          try {
+            messageObject.content = decrypt(messageObject.content);
+          } catch {
+            messageObject.content = "[Encrypted Message]";
+          }
         }
-      }
-      return messageObject;
-    });
+
+        // media: fetch presigned url if type is image/audio
+        if (
+          messageObject.mediaUrl &&
+          ["image", "voice"].includes(messageObject.type)
+        ) {
+          const url = await fetchPresignedUrlForKey(messageObject.mediaUrl);
+          messageObject.media = url || null;
+        } else {
+          messageObject.media = null;
+        }
+
+        return messageObject;
+      })
+    );
 
     res.status(200).json(decryptedMessages.reverse());
   } catch (err) {
