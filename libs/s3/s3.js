@@ -1,6 +1,6 @@
-import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { Upload } from "@aws-sdk/lib-storage";
+const { S3Client, GetObjectCommand } = require("@aws-sdk/client-s3");
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
+const { Upload } = require("@aws-sdk/lib-storage");
 
 const s3Client = new S3Client({
   region: process.env.S3_REGION,
@@ -12,7 +12,7 @@ const s3Client = new S3Client({
   },
 });
 
-export class Uploader {
+class Uploader {
   async uploadPublicFile(fileName, fileBuffer) {
     const folderName = "public";
     try {
@@ -65,8 +65,9 @@ export class Uploader {
       });
 
       const signedUrl = await getSignedUrl(s3Client, command, {
-        expiresIn: 3600,
+        expiresIn: 3600, // 1 hour
       });
+
       return signedUrl;
     } catch (err) {
       console.error("❌ Error generating presigned URL:", err);
@@ -74,3 +75,5 @@ export class Uploader {
     }
   }
 }
+
+module.exports = { Uploader };
