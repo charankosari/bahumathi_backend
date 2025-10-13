@@ -56,3 +56,24 @@ exports.getPresignedUrl = async (req, res, next) => {
     next(error);
   }
 };
+exports.deleteFile = async (req, res, next) => {
+  try {
+    const fileKey = req.query.key; // or req.query.key — up to your API design
+
+    if (!fileKey) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing file key" });
+    }
+
+    const result = await Uploader.deleteFile(fileKey);
+
+    res.status(200).json({
+      success: true,
+      message: `File deleted successfully`,
+      key: result.key,
+    });
+  } catch (error) {
+    next(error);
+  }
+};

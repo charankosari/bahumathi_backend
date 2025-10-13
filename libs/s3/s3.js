@@ -1,4 +1,8 @@
-const { S3Client, GetObjectCommand } = require("@aws-sdk/client-s3");
+const {
+  S3Client,
+  GetObjectCommand,
+  DeleteObjectCommand,
+} = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 const { Upload } = require("@aws-sdk/lib-storage");
 
@@ -74,6 +78,21 @@ class Uploader {
       throw err;
     }
   }
-}
+  static async deleteFile(fileKey) {
+    try {
+      const command = new DeleteObjectCommand({
+        Bucket: process.env.S3_BUCKET,
+        Key: fileKey,
+      });
 
+      await s3Client.send(command);
+
+      console.log(`✅ Deleted file: ${fileKey}`);
+      return { success: true, key: fileKey };
+    } catch (err) {
+      console.error("❌ Error deleting file:", err);
+      throw err;
+    }
+  }
+}
 module.exports = { Uploader };
