@@ -120,7 +120,10 @@ function initChatSocket(io) {
           message: unencryptedMessageForSocket,
           conversation,
         });
-
+        socket.emit("receiveMessage", {
+          message: unencryptedMessageForSocket,
+          conversation,
+        });
         // Emit gift-specific events if gift exists
         if (giftRecord) {
           // Receiver should know a gift arrived and its details
