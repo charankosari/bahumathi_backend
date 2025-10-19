@@ -56,6 +56,10 @@ function initChatSocket(io) {
             giftPayload.giftType || data.giftType || data.type || "generic";
           const status = giftPayload.status || data.status || "pending";
           const orderId = giftPayload.orderId || data.orderId || null;
+          const pricePerUnitAtGift =
+            giftPayload.pricePerUnitAtGift || data.pricePerUnitAtGift || 0;
+          const quantity = giftPayload.quantity || data.quantity || amount;
+          const valueInINR = giftPayload.valueInINR || data.valueInINR || 0;
 
           // Create gift linked to this conversation (conversation guaranteed above)
           giftRecord = await Gift.create({
@@ -63,6 +67,9 @@ function initChatSocket(io) {
             receiverId,
             type: giftType,
             amount,
+            pricePerUnitAtGift,
+            quantity,
+            valueInINR,
             orderId,
             status,
             conversationId: conversation._id,
