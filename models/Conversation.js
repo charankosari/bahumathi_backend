@@ -13,7 +13,7 @@ const conversationSchema = new mongoose.Schema(
 
     lastMessageType: {
       type: String,
-      enum: ["text", "image", "voice", "gift"],
+      enum: ["text", "image", "voice", "gift", "giftWithMessage"],
     },
     unreadCounts: {
       type: Map,

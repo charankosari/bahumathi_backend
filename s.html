@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Chat UI - Gift Tester</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <style>
+      :root {
+        --bg: #f2f6f9;
+        --panel: #ffffff;
+        --accent: #2b8cff;
+        --muted: #8b98a8;
+        --me-bg: #dcf8c6;
+        --other-bg: #ffffff;
+        --shadow: 0 6px 18px rgba(18, 38, 63, 0.06);
+        --radius: 12px;
+        --font: Inter, "Helvetica Neue", Arial, sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 18px;
+        font-family: var(--font);
+        background: linear-gradient(180deg, #eef3f8 0%, #f7fbff 100%);
+        color: #1b2733;
+      }
+
+      .app {
+        display: flex;
+        gap: 18px;
+        max-width: 1100px;
+        margin: 0 auto;
+      }
+
+      /* LEFT: Chat panel */
+      .chat {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        height: 78vh;
+        background: var(--panel);
+        border-radius: 14px;
+        box-shadow: var(--shadow);
+        overflow: hidden;
+      }
+
+      .chat-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 16px;
+        border-bottom: 1px solid #eef2f6;
+        background: linear-gradient(
+          90deg,
+          rgba(255, 255, 255, 0.6),
+          rgba(255, 255, 255, 0.45)
+        );
+      }
+      .brand {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+      }
+      .logo {
+        width: 44px;
+        height: 44px;
+        border-radius: 10px;
+        background: linear-gradient(135deg, #2b8cff, #00c2a8);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: 700;
+        box-shadow: 0 6px 14px rgba(43, 140, 255, 0.18);
+      }
+      .title {
+        font-weight: 700;
+        font-size: 16px;
+      }
+      .sub {
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 2px;
+      }
+
+      .conn {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+      .status-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--muted);
+        display: inline-block;
+      }
+      .status-text {
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      /* message area */
+      .messages {
+        flex: 1;
+        padding: 18px;
+        overflow: auto;
+        background: linear-gradient(
+          180deg,
+          rgba(250, 252, 255, 0.7),
+          rgba(250, 252, 255, 0.4)
+        );
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .bubble {
+        max-width: 70%;
+        padding: 10px 12px;
+        border-radius: 14px;
+        box-shadow: 0 2px 6px rgba(17, 24, 39, 0.03);
+        display: inline-block;
+        word-wrap: break-word;
+      }
+      .row-me {
+        align-self: flex-end;
+        display: flex;
+        gap: 10px;
+        align-items: flex-end;
+      }
+      .row-other {
+        align-self: flex-start;
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+      }
+
+      .bubble.me {
+        background: var(--me-bg);
+      }
+      .bubble.other {
+        background: var(--other-bg);
+        border: 1px solid #eef2f6;
+      }
+
+      .meta {
+        font-size: 11px;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+      .gift-tile {
+        margin-top: 8px;
+        padding: 8px;
+        border-radius: 10px;
+        background: #fff6f1;
+        border: 1px solid #ffe9d6;
+        font-size: 13px;
+      }
+
+      /* bottom input bar */
+      .composer {
+        padding: 12px;
+        border-top: 1px solid #eef2f6;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        background: #ffffff;
+      }
+      .composer input[type="text"],
+      .composer textarea {
+        flex: 1;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid #e6edf3;
+        font-size: 14px;
+        resize: none;
+        background: #fafcff;
+      }
+      .btn {
+        background: var(--accent);
+        color: white;
+        border: none;
+        padding: 10px 12px;
+        border-radius: 10px;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      .btn.secondary {
+        background: #f1f5f9;
+        color: #24313b;
+        border: 1px solid #e6edf3;
+      }
+
+      /* RIGHT: Sidebar */
+      .sidebar {
+        width: 300px;
+        background: var(--panel);
+        border-radius: 12px;
+        box-shadow: var(--shadow);
+        padding: 14px;
+        height: 78vh;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .panel {
+        background: linear-gradient(180deg, #fff, #fcfeff);
+        border-radius: 10px;
+        padding: 10px;
+        border: 1px solid #eef2f6;
+      }
+      .users-list {
+        max-height: 220px;
+        overflow: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .user-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      .user-item:hover {
+        background: #fbfdff;
+      }
+      .avatar {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
+        background: #e9f2ff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #1b2733;
+        font-weight: 700;
+      }
+      .online {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #2be07a;
+        border: 2px solid #fff;
+        box-shadow: 0 0 0 2px rgba(43, 224, 122, 0.06);
+      }
+
+      .tools {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .small {
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      /* log */
+      #log {
+        height: 140px;
+        overflow: auto;
+        padding: 8px;
+        background: #fbfdff;
+        border: 1px dashed #e6eef6;
+        border-radius: 8px;
+        font-size: 12px;
+      }
+
+      /* responsive */
+      @media (max-width: 980px) {
+        .app {
+          flex-direction: column;
+          padding: 12px;
+        }
+        .sidebar {
+          width: 100%;
+          height: auto;
+        }
+        .chat {
+          height: 60vh;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div style="max-width: 1100px; margin: 0 auto 18px">
+      <h2
+        style="margin: 0 0 8px 0; font-family: Inter, Arial; font-weight: 700"
+      >
+        Chat UI — Gift Tester
+      </h2>
+      <div class="small" style="margin-bottom: 8px; color: var(--muted)">
+        Connect to your socket backend with a Bearer token, select a receiver,
+        send messages or gifts.
+      </div>
+    </div>
+
+    <div class="app">
+      <!-- CHAT PANEL -->
+      <div class="chat">
+        <div class="chat-header">
+          <div class="brand">
+            <div class="logo">G</div>
+            <div>
+              <div class="title">Gifts Chat Debug</div>
+              <div class="sub">
+                Simple tester — connect, send gifts & messages
+              </div>
+            </div>
+          </div>
+
+          <div class="conn">
+            <div style="font-size: 13px">
+              <div style="display: flex; gap: 8px; align-items: center">
+                <input
+                  id="socketUrl"
+                  value="http://localhost:4000"
+                  style="
+                    padding: 8px;
+                    border-radius: 8px;
+                    border: 1px solid #e6edf3;
+                    width: 290px;
+                  "
+                />
+                <input
+                  id="token"
+                  placeholder="Bearer token"
+                  style="
+                    padding: 8px;
+                    border-radius: 8px;
+                    border: 1px solid #e6edf3;
+                    width: 380px;
+                  "
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+        <button id="connectBtn" class="btn">Connect</button>
+
+        <div
+          style="
+            display: flex;
+            gap: 12px;
+            padding: 12px 16px;
+            border-bottom: 1px solid #f0f4f8;
+          "
+        >
+          <label style="font-size: 13px; color: var(--muted)"
+            >My UserId:
+            <input
+              id="myId"
+              placeholder="your user id"
+              style="
+                margin-left: 8px;
+                padding: 8px;
+                border-radius: 8px;
+                border: 1px solid #e6edf3;
+              "
+            />
+          </label>
+
+          <label style="font-size: 13px; color: var(--muted)"
+            >ReceiverId:
+            <input
+              id="otherId"
+              placeholder="other user id"
+              style="
+                margin-left: 8px;
+                padding: 8px;
+                border-radius: 8px;
+                border: 1px solid #e6edf3;
+              "
+            />
+          </label>
+
+          <div
+            style="
+              margin-left: auto;
+              display: flex;
+              gap: 8px;
+              align-items: center;
+            "
+          >
+            <span id="connStatus" class="small" style="color: var(--muted)"
+              >Not connected</span
+            >
+          </div>
+        </div>
+
+        <div class="messages" id="messages" aria-live="polite">
+          <!-- messages appended here -->
+        </div>
+
+        <div class="composer">
+          <textarea
+            id="textInput"
+            rows="2"
+            placeholder="Type a message..."
+            style="min-height: 44px"
+          ></textarea>
+          <button class="btn" onclick="sendPlainText()">Send</button>
+          <button class="btn secondary" onclick="startTyping()">Typing</button>
+          <button class="btn secondary" onclick="stopTyping()">Stop</button>
+        </div>
+      </div>
+
+      <!-- SIDEBAR -->
+      <div class="sidebar">
+        <div class="panel">
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+            "
+          >
+            <div style="font-weight: 700">Presence</div>
+            <div class="small">Realtime</div>
+          </div>
+          <div class="users-list" id="users">
+            <!-- user items -->
+          </div>
+        </div>
+
+        <div class="panel tools">
+          <div style="font-weight: 700">Send Gift</div>
+          <label class="small"
+            >Gift name
+            <input
+              id="giftName"
+              value="Gold Gift"
+              style="
+                width: 100%;
+                padding: 8px;
+                border-radius: 8px;
+                border: 1px solid #e6edf3;
+                margin-top: 6px;
+              "
+            />
+          </label>
+          <div style="display: flex; gap: 8px">
+            <select
+              id="giftType"
+              style="
+                flex: 1;
+                padding: 8px;
+                border-radius: 8px;
+                border: 1px solid #e6edf3;
+              "
+            >
+              <option value="gold">gold</option>
+              <option value="stock">stock</option>
+            </select>
+            <input
+              id="giftValue"
+              type="number"
+              value="1000"
+              style="
+                width: 120px;
+                padding: 8px;
+                border-radius: 8px;
+                border: 1px solid #e6edf3;
+              "
+            />
+            <input
+              id="giftQty"
+              type="number"
+              value="1"
+              style="
+                width: 70px;
+                padding: 8px;
+                border-radius: 8px;
+                border: 1px solid #e6edf3;
+              "
+            />
+          </div>
+
+          <label class="small" style="margin-top: 8px"
+            >Message (optional)
+            <textarea
+              id="giftMessage"
+              rows="2"
+              style="
+                width: 100%;
+                margin-top: 6px;
+                padding: 8px;
+                border-radius: 8px;
+                border: 1px solid #e6edf3;
+              "
+            ></textarea>
+          </label>
+
+          <div style="display: flex; gap: 8px; margin-top: 8px">
+            <button class="btn" onclick="sendGiftWithOptionalMessage()">
+              Send Gift
+            </button>
+            <button class="btn secondary" onclick="allotGiftPrompt()">
+              Allot Gift
+            </button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div style="font-weight: 700; margin-bottom: 8px">
+            Conversation Tools
+          </div>
+          <label class="small"
+            >ConversationId (optional)
+            <input
+              id="convId"
+              style="
+                width: 100%;
+                padding: 8px;
+                border-radius: 8px;
+                border: 1px solid #e6edf3;
+                margin-top: 6px;
+              "
+            />
+          </label>
+          <div style="display: flex; gap: 8px; margin-top: 8px">
+            <button class="btn secondary" onclick="markCurrentConvRead()">
+              Mark Read
+            </button>
+            <button class="btn secondary" onclick="fetchHistory()">
+              Load History
+            </button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div style="font-weight: 700; margin-bottom: 6px">Logs</div>
+          <div id="log"></div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // --- existing logic preserved, only UI updated ---
+      let socket = null;
+      const usersEl = document.getElementById("users");
+      const msgsEl = document.getElementById("messages");
+      const logEl = document.getElementById("log");
+
+      function log(msg, data) {
+        const d = document.createElement("div");
+        d.textContent =
+          `[${new Date().toLocaleTimeString()}] ${msg}` +
+          (data ? " " + JSON.stringify(data) : "");
+        logEl.appendChild(d);
+        logEl.scrollTop = logEl.scrollHeight;
+        console.log(msg, data);
+      }
+
+      function createUserItem(id, online) {
+        const el = document.createElement("div");
+        el.className = "user-item";
+        el.id = "user-" + id;
+        const avatar = document.createElement("div");
+        avatar.className = "avatar";
+        avatar.textContent = (id || "U").slice(0, 2).toUpperCase();
+        const name = document.createElement("div");
+        name.style.flex = "1";
+        name.innerHTML = `<div style="font-weight:600;font-size:13px">${id}</div><div class="small">${
+          online ? "online" : "offline"
+        }</div>`;
+        const dot = document.createElement("div");
+        dot.style.display = "flex";
+        dot.style.alignItems = "center";
+        if (online) {
+          const on = document.createElement("div");
+          on.className = "online";
+          dot.appendChild(on);
+        }
+        el.appendChild(avatar);
+        el.appendChild(name);
+        el.appendChild(dot);
+        el.addEventListener("click", () => {
+          document.getElementById("otherId").value = id;
+        });
+        return el;
+      }
+
+      function upsertUser(id, online) {
+        let el = document.getElementById("user-" + id);
+        if (!el) {
+          el = createUserItem(id, online);
+          usersEl.appendChild(el);
+        } else {
+          const small = el.querySelector(".small");
+          if (small) small.textContent = online ? "online" : "offline";
+          const dot = el.querySelector(".online");
+          if (online && !dot) {
+            const wrapper = el.querySelector("div:last-child");
+            const on = document.createElement("div");
+            on.className = "online";
+            wrapper.appendChild(on);
+          } else if (!online && dot) {
+            dot.remove();
+          }
+        }
+      }
+
+      function appendMessage(msgObj, mine = false) {
+        const wrapper = document.createElement("div");
+        wrapper.className = mine ? "row-me" : "row-other";
+
+        const bubble = document.createElement("div");
+        bubble.className = "bubble " + (mine ? "me" : "other");
+
+        // meta (sender/time)
+        const meta = document.createElement("div");
+        meta.className = "meta";
+        const time = new Date(
+          msgObj.createdAt || Date.now()
+        ).toLocaleTimeString();
+        meta.textContent = `${
+          msgObj.senderId || (mine ? "me" : "other")
+        } • ${time}`;
+        bubble.appendChild(meta);
+
+        // content
+        const content = document.createElement("div");
+        // if message type is not text, show type
+        if (msgObj.type && msgObj.type !== "text") {
+          const t = document.createElement("div");
+          t.style.fontSize = "13px";
+          t.style.marginBottom = "6px";
+          t.textContent = `[${msgObj.type}]`;
+          bubble.appendChild(t);
+        }
+        const txt = document.createElement("div");
+        txt.textContent = msgObj.content || (msgObj.mediaUrl ? "[media]" : "");
+        bubble.appendChild(txt);
+
+        // gift if present
+        if (msgObj.gift) {
+          const g = document.createElement("div");
+          g.className = "gift-tile";
+          g.innerHTML = `🎁 <strong>${
+            msgObj.gift.name || msgObj.gift.type
+          }</strong>
+            • INR ${
+              msgObj.gift.valueInINR || msgObj.gift.pricePerUnitAtGift || ""
+            }
+            <div style="font-size:12px;color:var(--muted);margin-top:6px">giftId: ${
+              msgObj.gift._id || msgObj.gift.id || ""
+            }</div>`;
+          bubble.appendChild(g);
+        }
+
+        wrapper.appendChild(bubble);
+        msgsEl.appendChild(wrapper);
+        msgsEl.scrollTop = msgsEl.scrollHeight;
+      }
+
+      document
+        .getElementById("connectBtn")
+        .addEventListener("click", connectSocket);
+
+      function connectSocket() {
+        const url = document.getElementById("socketUrl").value.trim();
+        const token = document.getElementById("token").value.trim();
+        if (!url) return alert("Socket URL required");
+
+        socket = io(url, {
+          auth: { token: token },
+          transports: ["websocket"],
+          reconnectionAttempts: 3,
+        });
+
+        socket.on("connect", () => {
+          document.getElementById("connStatus").textContent =
+            "Connected (socket id: " + socket.id + ")";
+          log("Connected", { id: socket.id });
+          socket.emit("goOnline");
+        });
+
+        socket.on("disconnect", () => {
+          document.getElementById("connStatus").textContent = "Disconnected";
+          log("Disconnected");
+        });
+
+        socket.on("connect_error", (err) => {
+          document.getElementById("connStatus").textContent = "Connect error";
+          log("connect_error", err && err.message ? err.message : err);
+        });
+
+        // presence
+        socket.on("userOnline", (id) => {
+          upsertUser(id, true);
+          log("userOnline", id);
+        });
+        socket.on("userOffline", (id) => {
+          upsertUser(id, false);
+          log("userOffline", id);
+        });
+
+        // messages
+        socket.on("receiveMessage", (payload) => {
+          log("receiveMessage", payload);
+          appendMessage(payload.message || payload, false);
+        });
+        socket.on("receiveGiftWithMessage", (payload) => {
+          log("receiveGiftWithMessage", payload);
+          const m = payload.message || {};
+          m.gift = payload.gift || m.gift;
+          appendMessage(m, false);
+        });
+
+        socket.on("giftWithMessageSent", (payload) => {
+          log("giftWithMessageSent", payload);
+          const m = payload.message || {};
+          m.gift = payload.gift || m.gift;
+          appendMessage(m, true);
+        });
+
+        ["giftAllotted", "giftAccepted", "error"].forEach((ev) => {
+          socket.on(ev, (data) => log(ev, data));
+        });
+
+        socket.on("userTyping", (d) => log("userTyping", d));
+        socket.on("userStoppedTyping", (d) => log("userStoppedTyping", d));
+      }
+
+      function sendPlainText() {
+        if (!socket || !socket.connected) return alert("Connect first");
+        const receiverId = document.getElementById("otherId").value.trim();
+        const text = document.getElementById("textInput").value.trim();
+        if (!receiverId || !text) return alert("Receiver and message required");
+        const payload = {
+          receiverId,
+          type: "text",
+          content: text,
+          conversationId:
+            document.getElementById("convId").value.trim() || undefined,
+        };
+        socket.emit("sendMessage", payload, (res) => {
+          log("sendMessage response", res);
+          if (res && res.success && res.message) {
+            appendMessage(res.message, true);
+            document.getElementById("textInput").value = "";
+          }
+        });
+      }
+
+      function sendGiftWithOptionalMessage() {
+        if (!socket || !socket.connected) return alert("Connect first");
+        const receiverId = document.getElementById("otherId").value.trim();
+        if (!receiverId) return alert("Receiver required");
+        const giftData = {
+          type: document.getElementById("giftType").value,
+          name: document.getElementById("giftName").value,
+          valueInINR: Number(document.getElementById("giftValue").value) || 0,
+          quantity: Number(document.getElementById("giftQty").value) || 1,
+          pricePerUnitAtGift:
+            Number(document.getElementById("giftValue").value) || 0,
+        };
+
+        const attachMsg = document.getElementById("giftMessage").value.trim();
+
+        socket.emit("sendGift", { receiverId, giftData }, (giftRes) => {
+          log("sendGift callback", giftRes);
+          if (!giftRes || !giftRes.success) {
+            alert("Gift creation failed: " + JSON.stringify(giftRes));
+            return;
+          }
+          const giftId = giftRes.giftId || (giftRes.gift && giftRes.gift._id);
+          if (attachMsg) {
+            const payload = {
+              receiverId,
+              type: "text",
+              content: attachMsg,
+              giftId: giftId,
+              conversationId:
+                giftRes.gift && giftRes.gift.conversationId
+                  ? giftRes.gift.conversationId
+                  : document.getElementById("convId").value.trim() || undefined,
+            };
+            socket.emit("sendMessage", payload, (msgRes) => {
+              log("sendMessage after sendGift", msgRes);
+              if (msgRes && msgRes.success && msgRes.message) {
+                const m = msgRes.message;
+                m.gift = giftRes.gift;
+                appendMessage(m, true);
+                document.getElementById("giftMessage").value = "";
+              }
+            });
+          } else {
+            log("Gift created (no message attached)", giftRes.gift);
+            const fakeMsg = {
+              senderId: document.getElementById("myId").value || "me",
+              receiverId,
+              content:
+                "🎁 Sent gift: " + (giftRes.gift.name || giftRes.gift.type),
+              createdAt: giftRes.gift.createdAt,
+              gift: giftRes.gift,
+            };
+            appendMessage(fakeMsg, true);
+          }
+        });
+      }
+
+      function startTyping() {
+        if (!socket || !socket.connected) return;
+        const receiverId = document.getElementById("otherId").value.trim();
+        if (!receiverId) return;
+        socket.emit("typing", { receiverId });
+        log("typing emitted", { receiverId });
+      }
+      function stopTyping() {
+        if (!socket || !socket.connected) return;
+        const receiverId = document.getElementById("otherId").value.trim();
+        if (!receiverId) return;
+        socket.emit("stopTyping", { receiverId });
+        log("stopTyping emitted", { receiverId });
+      }
+
+      function markCurrentConvRead() {
+        if (!socket || !socket.connected) return alert("Connect first");
+        const convId = document.getElementById("convId").value.trim();
+        if (!convId) return alert("ConversationId required to mark as read");
+        socket.emit("markAsRead", { conversationId: convId });
+        log("markAsRead emitted", convId);
+      }
+
+      function allotGiftPrompt() {
+        if (!socket || !socket.connected) return alert("Connect first");
+        const giftId = prompt(
+          "Enter giftId to allot (receiver must match current user auth):"
+        );
+        if (!giftId) return;
+        const chosenType = prompt("Convert to (gold/stock):", "gold") || "gold";
+        socket.emit("allotGift", { giftId, chosenType });
+        log("allotGift emitted", { giftId, chosenType });
+      }
+
+      // optional helper: load conversation history from a GET endpoint
+      async function fetchHistory() {
+        const convId = document.getElementById("convId").value.trim();
+        if (!convId) return alert("ConversationId required for history");
+        const urlBase =
+          prompt(
+            "Enter REST base URL (e.g. http://localhost:4000) or Cancel to skip",
+            document.getElementById("socketUrl").value
+          ) || null;
+        if (!urlBase) return;
+        try {
+          const res = await fetch(
+            `${urlBase.replace(/\/$/, "")}/conversations/${convId}/messages`,
+            {
+              headers: {
+                Authorization: document.getElementById("token").value || "",
+              },
+            }
+          );
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          const data = await res.json();
+          // clear messages panel and render history
+          msgsEl.innerHTML = "";
+          data.messages.forEach((m) =>
+            appendMessage(
+              m,
+              m.senderId === document.getElementById("myId").value
+            )
+          );
+          log("history loaded", { count: data.messages.length });
+        } catch (err) {
+          log("history error", err.message || err);
+          alert("Failed to load history: " + (err.message || err));
+        }
+      }
+    </script>
+  </body>
+</html>
