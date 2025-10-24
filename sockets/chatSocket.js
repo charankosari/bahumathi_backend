@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const { encrypt } = require("../utils/crypto.util");
 const Message = require("../models/Message");
 const Gift = require("../models/Gift");
@@ -33,7 +34,7 @@ function initChatSocket(io) {
         const senderId = socket.user.id;
 
         // The client only needs to send the receiver and content
-        const { receiverId, type, content, mediaUrl } = data;
+        const { receiverId, type, content, mediaUrl, giftData } = data;
 
         // --- CONVERSATION LOGIC ---
         let conversation = await Conversation.findOne({
@@ -45,33 +46,43 @@ function initChatSocket(io) {
           });
         }
 
-        // --- GIFT CREATION (if message is a gift) ---
+        // --- GIFT CREATION (if message is a gift OR if giftData is provided) ---
         let giftRecord = null;
         let giftId = null;
-        if (type === "gift") {
-          // Accept nested payload data.gift OR flat fields on data
-          const giftPayload = data.gift || {};
+        if (type === "gift" || giftData) {
+          // Use giftData if provided, otherwise use legacy gift fields
+          const giftPayload = giftData || data.gift || {};
           const amount = giftPayload.amount ?? data.amount ?? 0;
           const giftType =
-            giftPayload.giftType || data.giftType || data.type || "generic";
+            giftPayload.type ||
+            giftPayload.giftType ||
+            data.giftType ||
+            data.type ||
+            "gold";
           const status = giftPayload.status || data.status || "pending";
           const orderId = giftPayload.orderId || data.orderId || null;
           const pricePerUnitAtGift =
             giftPayload.pricePerUnitAtGift || data.pricePerUnitAtGift || 0;
           const quantity = giftPayload.quantity || data.quantity || amount;
           const valueInINR = giftPayload.valueInINR || data.valueInINR || 0;
+          const name = giftPayload.name || "Gift";
+          const icon = giftPayload.icon || null;
+          const note = giftPayload.note || null;
 
           // Create gift linked to this conversation (conversation guaranteed above)
           giftRecord = await Gift.create({
             senderId,
             receiverId,
             type: giftType,
+            name,
+            icon,
             amount,
             pricePerUnitAtGift,
             quantity,
             valueInINR,
             orderId,
             status,
+            note,
             conversationId: conversation._id,
           });
 
@@ -80,10 +91,14 @@ function initChatSocket(io) {
 
         // Prepare conversation lastMessage and unread counts
         conversation.lastMessage = {
-          text: type === "gift" ? "🎁 Gift" : encrypt(content),
+          text:
+            type === "gift" || giftData
+              ? "🎁 Gift with message"
+              : encrypt(content),
           sender: senderId,
         };
-        conversation.lastMessageType = type;
+        conversation.lastMessageType =
+          type === "gift" || giftData ? "giftWithMessage" : type;
         const currentUnread = conversation.unreadCounts.get(receiverId) || 0;
         conversation.unreadCounts.set(receiverId, currentUnread + 1);
         await conversation.save();
@@ -93,7 +108,7 @@ function initChatSocket(io) {
           conversationId: conversation._id,
           senderId, // Using the trusted senderId
           receiverId,
-          type,
+          type: type === "gift" || giftData ? "giftWithMessage" : type,
           content: type === "text" ? encrypt(content) : content,
           mediaUrl,
           giftId: giftId || undefined,
@@ -115,28 +130,28 @@ function initChatSocket(io) {
           gift: giftRecord ? giftRecord.toObject() : undefined,
         };
 
-        // Emit message to receiver room
-        io.to(receiverId).emit("receiveMessage", {
-          message: unencryptedMessageForSocket,
-          conversation,
-        });
-        socket.emit("receiveMessage", {
-          message: unencryptedMessageForSocket,
-          conversation,
-        });
-        // Emit gift-specific events if gift exists
+        // Emit combined gift+message events if gift exists, otherwise regular message
         if (giftRecord) {
-          // Receiver should know a gift arrived and its details
-          io.to(receiverId).emit("giftCreated", {
+          // Combined gift+message events
+          io.to(receiverId).emit("receiveGiftWithMessage", {
+            message: unencryptedMessageForSocket,
             gift: giftRecord,
+            conversation,
+          });
+          socket.emit("giftWithMessageSent", {
+            message: unencryptedMessageForSocket,
+            gift: giftRecord,
+            conversation,
+          });
+        } else {
+          // Regular message events
+          io.to(receiverId).emit("receiveMessage", {
             message: unencryptedMessageForSocket,
             conversation,
           });
-
-          // Acknowledge sender (on their socket) that gift was sent
-          socket.emit("giftSent", {
-            gift: giftRecord,
+          socket.emit("receiveMessage", {
             message: unencryptedMessageForSocket,
+            conversation,
           });
         }
 

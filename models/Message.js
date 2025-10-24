@@ -10,7 +10,7 @@ const messageSchema = new mongoose.Schema(
     receiverId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     type: {
       type: String,
-      enum: ["text", "image", "voice", "gift"],
+      enum: ["text", "image", "voice", "gift", "giftWithMessage"],
       default: "text",
     },
     content: { type: String },
