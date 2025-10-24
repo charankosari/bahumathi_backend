@@ -27,14 +27,19 @@ function initChatSocket(io) {
       console.log(`User ${userId} is online.`);
     });
 
-    // 2. Handle sending messages (securely)
-    socket.on("sendMessage", async (data, callback) => {
+    // 2. Handle sending gifts first
+    socket.on("sendGift", async (data, callback) => {
       try {
-        // ✨ SENDER ID IS NOW TRUSTED, TAKEN FROM THE AUTHENTICATED SOCKET
         const senderId = socket.user.id;
+        const { receiverId, giftData } = data;
 
-        // The client only needs to send the receiver and content
-        const { receiverId, type, content, mediaUrl, giftData } = data;
+        // Validate required fields
+        if (!giftData) {
+          return callback({
+            success: false,
+            error: "Gift data is required",
+          });
+        }
 
         // --- CONVERSATION LOGIC ---
         let conversation = await Conversation.findOne({
@@ -46,59 +51,76 @@ function initChatSocket(io) {
           });
         }
 
-        // --- GIFT CREATION (if message is a gift OR if giftData is provided) ---
-        let giftRecord = null;
-        let giftId = null;
-        if (type === "gift" || giftData) {
-          // Use giftData if provided, otherwise use legacy gift fields
-          const giftPayload = giftData || data.gift || {};
-          const amount = giftPayload.amount ?? data.amount ?? 0;
-          const giftType =
-            giftPayload.type ||
-            giftPayload.giftType ||
-            data.giftType ||
-            data.type ||
-            "gold";
-          const status = giftPayload.status || data.status || "pending";
-          const orderId = giftPayload.orderId || data.orderId || null;
-          const pricePerUnitAtGift =
-            giftPayload.pricePerUnitAtGift || data.pricePerUnitAtGift || 0;
-          const quantity = giftPayload.quantity || data.quantity || amount;
-          const valueInINR = giftPayload.valueInINR || data.valueInINR || 0;
-          const name = giftPayload.name || "Gift";
-          const icon = giftPayload.icon || null;
-          const note = giftPayload.note || null;
+        // --- GIFT CREATION ---
+        const giftRecord = await Gift.create({
+          senderId,
+          receiverId,
+          type: giftData.type || "gold",
+          name: giftData.name || "Gift",
+          icon: giftData.icon || null,
+          amount: giftData.amount || 0,
+          pricePerUnitAtGift: giftData.pricePerUnitAtGift || 0,
+          quantity: giftData.quantity || 0,
+          valueInINR: giftData.valueInINR || 0,
+          orderId: giftData.orderId || null,
+          status: "pending",
+          note: giftData.note || null,
+          conversationId: conversation._id,
+        });
 
-          // Create gift linked to this conversation (conversation guaranteed above)
-          giftRecord = await Gift.create({
-            senderId,
-            receiverId,
-            type: giftType,
-            name,
-            icon,
-            amount,
-            pricePerUnitAtGift,
-            quantity,
-            valueInINR,
-            orderId,
-            status,
-            note,
-            conversationId: conversation._id,
+        // Return gift data to sender
+        if (callback) {
+          callback({
+            success: true,
+            gift: giftRecord,
+            giftId: giftRecord._id,
+          });
+        }
+      } catch (err) {
+        console.error("Error creating gift:", err.message);
+        if (callback) callback({ success: false, error: err.message });
+      }
+    });
+
+    // 3. Handle sending messages (with optional giftId)
+    socket.on("sendMessage", async (data, callback) => {
+      try {
+        const senderId = socket.user.id;
+        const { receiverId, type, content, mediaUrl, giftId } = data;
+
+        // --- CONVERSATION LOGIC ---
+        let conversation = await Conversation.findOne({
+          participants: { $all: [senderId, receiverId] },
+        });
+        if (!conversation) {
+          conversation = await Conversation.create({
+            participants: [senderId, receiverId],
+          });
+        }
+
+        // --- VALIDATE GIFT IF giftId PROVIDED ---
+        let giftRecord = null;
+        if (giftId) {
+          giftRecord = await Gift.findOne({
+            _id: giftId,
+            senderId: senderId, // Ensure sender owns this gift
+            receiverId: receiverId,
           });
 
-          giftId = giftRecord._id;
+          if (!giftRecord) {
+            return callback({
+              success: false,
+              error: "Gift not found or access denied",
+            });
+          }
         }
 
         // Prepare conversation lastMessage and unread counts
         conversation.lastMessage = {
-          text:
-            type === "gift" || giftData
-              ? "🎁 Gift with message"
-              : encrypt(content),
+          text: giftId ? "🎁 Gift with message" : encrypt(content),
           sender: senderId,
         };
-        conversation.lastMessageType =
-          type === "gift" || giftData ? "giftWithMessage" : type;
+        conversation.lastMessageType = giftId ? "giftWithMessage" : type;
         const currentUnread = conversation.unreadCounts.get(receiverId) || 0;
         conversation.unreadCounts.set(receiverId, currentUnread + 1);
         await conversation.save();
@@ -106,15 +128,15 @@ function initChatSocket(io) {
         // --- MESSAGE CREATION ---
         const newMessage = await Message.create({
           conversationId: conversation._id,
-          senderId, // Using the trusted senderId
+          senderId,
           receiverId,
-          type: type === "gift" || giftData ? "giftWithMessage" : type,
+          type: giftId ? "giftWithMessage" : type,
           content: type === "text" ? encrypt(content) : content,
           mediaUrl,
           giftId: giftId || undefined,
         });
 
-        // If we created a gift above, update it with the messageId for easy lookup
+        // Update gift with messageId if gift exists
         if (giftRecord) {
           giftRecord = await Gift.findByIdAndUpdate(
             giftRecord._id,

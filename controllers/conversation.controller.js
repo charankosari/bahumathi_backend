@@ -83,6 +83,7 @@ exports.getMessagesForConversation = async (req, res, next) => {
     const skip = (page - 1) * limit;
 
     const messages = await Message.find({ conversationId })
+      .populate("giftId")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit);
@@ -110,6 +111,12 @@ exports.getMessagesForConversation = async (req, res, next) => {
           messageObject.media = url || null;
         } else {
           messageObject.media = null;
+        }
+
+        // Add gift data if message has a gift
+        if (messageObject.giftId) {
+          messageObject.gift = messageObject.giftId;
+          delete messageObject.giftId; // Clean up the reference
         }
 
         return messageObject;
@@ -148,8 +155,9 @@ exports.getMessagesByUserId = async (req, res, next) => {
     const limit = 25;
     const skip = (page - 1) * limit;
 
-    // Get last 25 messages for that conversation
+    // Get last 25 messages for that conversation with gift data
     const messages = await Message.find({ conversationId: conversation._id })
+      .populate("giftId")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit);
@@ -177,6 +185,12 @@ exports.getMessagesByUserId = async (req, res, next) => {
           messageObject.media = url || null;
         } else {
           messageObject.media = null;
+        }
+
+        // Add gift data if message has a gift
+        if (messageObject.giftId) {
+          messageObject.gift = messageObject.giftId;
+          delete messageObject.giftId; // Clean up the reference
         }
 
         return messageObject;
