@@ -82,11 +82,11 @@ function initChatSocket(io) {
       }
     });
 
-    // 3. Handle sending messages (with optional giftId)
+    // 3. Handle sending messages (with optional giftId or gift data)
     socket.on("sendMessage", async (data, callback) => {
       try {
         const senderId = socket.user.id;
-        const { receiverId, type, content, mediaUrl, giftId } = data;
+        const { receiverId, type, content, mediaUrl, giftId, gift } = data;
 
         // --- CONVERSATION LOGIC ---
         let conversation = await Conversation.findOne({
@@ -98,9 +98,28 @@ function initChatSocket(io) {
           });
         }
 
-        // --- VALIDATE GIFT IF giftId PROVIDED ---
+        // --- HANDLE GIFT CREATION IF GIFT DATA PROVIDED ---
         let giftRecord = null;
-        if (giftId) {
+        if (gift) {
+          // Create new gift from provided data
+          giftRecord = await Gift.create({
+            senderId,
+            receiverId,
+            type: gift.type || "gold",
+            name: gift.name || "Gift",
+            icon: gift.icon || null,
+            amount: gift.amount || 0,
+            pricePerUnitAtGift: gift.pricePerUnitAtGift || 0,
+            quantity: gift.quantity || 0,
+            valueInINR: gift.valueInINR || 0,
+            orderId: gift.orderId || null,
+            status: "pending",
+            note: gift.note || null,
+            conversationId: conversation._id,
+            isSelfGift: gift.isSelfGift || false,
+          });
+        } else if (giftId) {
+          // Validate existing gift
           giftRecord = await Gift.findOne({
             _id: giftId,
             senderId: senderId, // Ensure sender owns this gift
@@ -117,10 +136,12 @@ function initChatSocket(io) {
 
         // Prepare conversation lastMessage and unread counts
         conversation.lastMessage = {
-          text: giftId ? "🎁 Gift with message" : encrypt(content),
+          text:
+            giftRecord || giftId ? "🎁 Gift with message" : encrypt(content),
           sender: senderId,
         };
-        conversation.lastMessageType = giftId ? "giftWithMessage" : type;
+        conversation.lastMessageType =
+          giftRecord || giftId ? "giftWithMessage" : type;
         const currentUnread = conversation.unreadCounts.get(receiverId) || 0;
         conversation.unreadCounts.set(receiverId, currentUnread + 1);
         await conversation.save();
@@ -130,10 +151,10 @@ function initChatSocket(io) {
           conversationId: conversation._id,
           senderId,
           receiverId,
-          type: giftId ? "giftWithMessage" : type,
-          content: type === "text" ? encrypt(content) : content,
+          type: giftRecord || giftId ? "giftWithMessage" : type,
+          content: type === "text" && content ? encrypt(content) : content,
           mediaUrl,
-          giftId: giftId || undefined,
+          giftId: giftRecord ? giftRecord._id : giftId || undefined,
         });
 
         // Update gift with messageId if gift exists
