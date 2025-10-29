@@ -458,7 +458,7 @@ exports.deleteUser = asyncHandler(async (req, res, next) => {
 
 exports.editUser = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
-  const { fullName, email, number, gender, birthDate } = req.body;
+  const { fullName, email, number, gender, birthDate, image } = req.body;
 
   const user = await User.findById(id);
 
@@ -500,6 +500,10 @@ exports.editUser = asyncHandler(async (req, res, next) => {
     if (!isNaN(parsed.getTime())) {
       user.birthDate = parsed;
     }
+  }
+  // Image update (public URL from upload)
+  if (image) {
+    user.image = image;
   }
 
   await user.save({ validateBeforeSave: false });
