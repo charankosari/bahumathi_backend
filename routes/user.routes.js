@@ -41,4 +41,8 @@ router
   .delete(isAuthorized, userController.deleteUser)
   .put(isAuthorized, userController.editUser);
 
+router
+  .route("/me/generate-qr")
+  .post(isAuthorized, userController.generateUserQr);
+
 module.exports = router;

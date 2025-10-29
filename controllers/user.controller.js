@@ -6,6 +6,8 @@ const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const sendOtp = require("../libs/sms/sms");
 const Gift = require("../models/Gift");
+const QRCode = require("qrcode");
+const { Uploader } = require("../libs/s3/s3");
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -16,6 +18,19 @@ const generateOtp = () => {
 const hashOtp = async (otp) => {
   const salt = await bcrypt.genSalt(10);
   return await bcrypt.hash(otp, salt);
+};
+
+// Ensure QR exists for a user (id-based URL) and upload to S3 once
+const ensureUserQr = async (user) => {
+  if (!user || user.qrCodeUrl) return user;
+  const url = `https://bahumati.in/?user=${user._id}`;
+  const pngBuffer = await QRCode.toBuffer(url, { type: "png", width: 512 });
+  const uploader = new Uploader();
+  const keyName = `qr_${user._id}.png`;
+  const publicUrl = await uploader.uploadPublicFile(keyName, pngBuffer);
+  user.qrCodeUrl = publicUrl;
+  await user.save({ validateBeforeSave: false });
+  return user;
 };
 
 // ========== SIGNUP (Number based) ==========
@@ -63,6 +78,12 @@ exports.signup = asyncHandler(async (req, res, next) => {
       otpExpires,
       active: false,
     });
+  }
+  // Generate QR once (if not already present)
+  try {
+    await ensureUserQr(user);
+  } catch (e) {
+    console.error("QR generation failed (signup):", e.message);
   }
   // After saving the user (or updating OTP):
   try {
@@ -158,6 +179,17 @@ exports.verifyOtp = asyncHandler(async (req, res, next) => {
   user.otp = undefined;
   user.otpExpires = undefined;
   await user.save({ validateBeforeSave: false });
+  try {
+    await ensureUserQr(user);
+  } catch (e) {
+    console.error("QR gen failed (verifyMobileOtpForGoogleAuth):", e.message);
+  }
+  // Ensure QR exists when user is activated/logs in the first time
+  try {
+    await ensureUserQr(user);
+  } catch (e) {
+    console.error("QR gen failed (verifyOtp):", e.message);
+  }
 
   sendJwtToken(user, 200, "Login successful", res);
 });
@@ -210,6 +242,12 @@ exports.googleAuth = asyncHandler(async (req, res, next) => {
     if (gender) createPayload.gender = gender;
     if (birthDate) createPayload.birthDate = new Date(birthDate);
     user = await User.create(createPayload);
+    // Generate QR for new Google user
+    try {
+      await ensureUserQr(user);
+    } catch (e) {
+      console.error("QR gen failed (googleAuth create):", e.message);
+    }
 
     // Don't send JWT token yet - user needs mobile verification
     res.status(200).json({
@@ -677,4 +715,37 @@ exports.getSuggestionsFromGifts = asyncHandler(async (req, res, next) => {
     suggestions,
     recents,
   });
+});
+
+// ========== GENERATE USER QR (public S3) ==========
+exports.generateUserQr = asyncHandler(async (req, res, next) => {
+  try {
+    const userId = req.user?.id || req.params.id;
+    if (!userId) {
+      const err = new Error("User id is required");
+      err.statusCode = 400;
+      return next(err);
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      const err = new Error("User not found");
+      err.statusCode = 404;
+      return next(err);
+    }
+
+    const url = `https://bahumati.in/?user=${user._id}`;
+    const pngBuffer = await QRCode.toBuffer(url, { type: "png", width: 512 });
+
+    const uploader = new Uploader();
+    const keyName = `qr_${user._id}.png`;
+    const publicUrl = await uploader.uploadPublicFile(keyName, pngBuffer);
+
+    user.qrCodeUrl = publicUrl;
+    await user.save({ validateBeforeSave: false });
+
+    res.status(200).json({ success: true, url: publicUrl });
+  } catch (e) {
+    return next(e);
+  }
 });

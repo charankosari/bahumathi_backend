@@ -30,6 +30,10 @@ const userSchema = new mongoose.Schema({
     type: String,
     sparse: true,
   },
+  qrCodeUrl: {
+    type: String,
+    sparse: true,
+  },
   number: {
     type: String,
     unique: true,
