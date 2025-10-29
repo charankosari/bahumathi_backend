@@ -32,7 +32,7 @@ class Uploader {
 
       await upload.done();
 
-      return `${process.env.S3_URL}/bahumati/${folderName}/${fileName}`;
+      return `${process.env.S3_URL}/${folderName}/${fileName}`;
     } catch (err) {
       console.error("❌ Error during public file upload:", err);
       throw err;
