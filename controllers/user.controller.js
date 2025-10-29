@@ -20,10 +20,10 @@ const hashOtp = async (otp) => {
   return await bcrypt.hash(otp, salt);
 };
 
-// Ensure QR exists for a user (id-based URL) and upload to S3 once
+// Ensure QR exists for a user (custom scheme id-based URL) and upload to S3 once
 const ensureUserQr = async (user) => {
   if (!user || user.qrCodeUrl) return user;
-  const url = `https://bahumati.in/?user=${user._id}`;
+  const url = `bahumati://user?id=${user._id}`;
   const pngBuffer = await QRCode.toBuffer(url, { type: "png", width: 512 });
   const uploader = new Uploader();
   const keyName = `qr_${user._id}.png`;
@@ -734,7 +734,7 @@ exports.generateUserQr = asyncHandler(async (req, res, next) => {
       return next(err);
     }
 
-    const url = `https://bahumati.in/?user=${user._id}`;
+    const url = `bahumati://user?id=${user._id}`;
     const pngBuffer = await QRCode.toBuffer(url, { type: "png", width: 512 });
 
     const uploader = new Uploader();
