@@ -460,6 +460,16 @@ exports.editUser = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
   const { fullName, email, number, gender, birthDate, image } = req.body;
 
+  console.log("➡️ editUser called", {
+    id,
+    fullName,
+    email,
+    number,
+    gender,
+    birthDate,
+    image,
+  });
+
   const user = await User.findById(id);
 
   if (!user) {
@@ -507,6 +517,7 @@ exports.editUser = asyncHandler(async (req, res, next) => {
   }
 
   await user.save({ validateBeforeSave: false });
+  console.log("✅ User updated", { id: user._id, image: user.image });
 
   res.status(200).json({
     success: true,
