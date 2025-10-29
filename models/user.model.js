@@ -8,6 +8,14 @@ const userSchema = new mongoose.Schema({
     required: [true, "Please provide your full name"],
     trim: true,
   },
+  gender: {
+    type: String,
+    enum: ["male", "female", "other"],
+    lowercase: true,
+  },
+  birthDate: {
+    type: Date,
+  },
   email: {
     type: String,
     unique: true,

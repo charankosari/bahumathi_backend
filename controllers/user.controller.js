@@ -186,16 +186,30 @@ exports.googleAuth = asyncHandler(async (req, res, next) => {
 
   const payload = ticket.getPayload();
   const { email, name, picture } = payload;
+  // Optional fields - available only with proper Google scopes
+  const gender = (
+    payload.gender ||
+    payload.sexe ||
+    payload.given_gender ||
+    payload.genderIdentity ||
+    ""
+  )
+    .toString()
+    .toLowerCase();
+  const birthDate = payload.birthdate || payload.birthday || payload.birthDate;
   let user = await User.findOne({ email });
 
   if (!user) {
     // New user - create inactive account, needs mobile verification
-    user = await User.create({
+    const createPayload = {
       fullName: name,
       email,
       image: picture,
       active: false,
-    });
+    };
+    if (gender) createPayload.gender = gender;
+    if (birthDate) createPayload.birthDate = new Date(birthDate);
+    user = await User.create(createPayload);
 
     // Don't send JWT token yet - user needs mobile verification
     res.status(200).json({
@@ -208,11 +222,24 @@ exports.googleAuth = asyncHandler(async (req, res, next) => {
         fullName: user.fullName,
         email: user.email,
         active: user.active,
+        gender: user.gender,
+        birthDate: user.birthDate,
       },
     });
   } else if (user.active && user.number) {
     sendJwtToken(user, 200, "Google login successful", res);
   } else if (!user.active) {
+    // If user exists but inactive, optionally backfill gender/dob if not set
+    let changed = false;
+    if (!user.gender && gender) {
+      user.gender = gender;
+      changed = true;
+    }
+    if (!user.birthDate && birthDate) {
+      user.birthDate = new Date(birthDate);
+      changed = true;
+    }
+    if (changed) await user.save({ validateBeforeSave: false });
     res.status(200).json({
       success: true,
       login: false,
@@ -223,6 +250,8 @@ exports.googleAuth = asyncHandler(async (req, res, next) => {
         fullName: user.fullName,
         email: user.email,
         active: user.active,
+        gender: user.gender,
+        birthDate: user.birthDate,
       },
     });
   }
@@ -391,7 +420,7 @@ exports.deleteUser = asyncHandler(async (req, res, next) => {
 
 exports.editUser = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
-  const { fullName, email, number } = req.body;
+  const { fullName, email, number, gender, birthDate } = req.body;
 
   const user = await User.findById(id);
 
@@ -424,6 +453,15 @@ exports.editUser = asyncHandler(async (req, res, next) => {
       return next(err);
     }
     user.number = number;
+  }
+
+  // Optional updates
+  if (gender) user.gender = gender.toLowerCase();
+  if (birthDate) {
+    const parsed = new Date(birthDate);
+    if (!isNaN(parsed.getTime())) {
+      user.birthDate = parsed;
+    }
   }
 
   await user.save({ validateBeforeSave: false });
