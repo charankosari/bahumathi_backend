@@ -17,7 +17,11 @@ const s3Client = new S3Client({
 });
 
 class Uploader {
-  async uploadPublicFile(fileName, fileBuffer, { contentDisposition } = {}) {
+  async uploadPublicFile(
+    fileName,
+    fileBuffer,
+    { contentDisposition, contentType } = {}
+  ) {
     const folderName = "public";
     try {
       const upload = new Upload({
@@ -27,6 +31,7 @@ class Uploader {
           ACL: "public-read",
           Body: fileBuffer,
           Key: `${folderName}/${fileName}`,
+          ContentType: contentType,
           ...(contentDisposition
             ? { ContentDisposition: contentDisposition }
             : {}),
@@ -42,7 +47,11 @@ class Uploader {
     }
   }
 
-  async uploadPrivateFile(fileName, fileBuffer, { contentDisposition } = {}) {
+  async uploadPrivateFile(
+    fileName,
+    fileBuffer,
+    { contentDisposition, contentType } = {}
+  ) {
     const folderName = "private";
     try {
       const upload = new Upload({
@@ -52,6 +61,7 @@ class Uploader {
           ACL: "private",
           Body: fileBuffer,
           Key: `${folderName}/${fileName}`,
+          ContentType: contentType,
           ...(contentDisposition
             ? { ContentDisposition: contentDisposition }
             : {}),
