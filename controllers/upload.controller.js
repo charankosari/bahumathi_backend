@@ -15,15 +15,8 @@ exports.uploadPublic = async (req, res, next) => {
   try {
     const file = req.file.buffer;
     const fileName = sanitizeFileName(req.file.originalname);
-    const fileType = req.file.mimetype;
-    // If multipart form includes inline=true, set ContentDisposition: inline
-    const wantsInline = String(req.body?.inline || "").toLowerCase() === "true";
-    const options = {
-      contentType: fileType, // <-- Pass it
-      ...(wantsInline ? { contentDisposition: "inline" } : {}),
-    };
 
-    const url = await uploader.uploadPublicFile(fileName, file, options);
+    const url = await uploader.uploadPublicFile(fileName, file);
 
     res.status(200).json({ success: true, url, status: 200 });
   } catch (error) {
@@ -36,14 +29,8 @@ exports.uploadPrivate = async (req, res, next) => {
   try {
     const file = req.file.buffer;
     const fileName = sanitizeFileName(req.file.originalname);
-    const fileType = req.file.mimetype;
-    const wantsInline = String(req.body?.inline || "").toLowerCase() === "true";
-    const options = {
-      contentType: fileType, // <-- Pass it
-      ...(wantsInline ? { contentDisposition: "inline" } : {}),
-    };
 
-    const key = await uploader.uploadPrivateFile(fileName, file, options);
+    const key = await uploader.uploadPrivateFile(fileName, file);
     res.status(200).json({ success: true, key });
   } catch (error) {
     next(error);
