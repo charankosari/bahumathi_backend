@@ -1,4 +1,4 @@
-const mongoose = require("mongoose");
+const mongoose = require("mongoose"); // Required for transactions
 const { encrypt } = require("../utils/crypto.util");
 const Message = require("../models/Message");
 const Gift = require("../models/Gift");
@@ -27,46 +27,59 @@ function initChatSocket(io) {
       console.log(`User ${userId} is online.`);
     });
 
-    // 2. Handle sending gifts first
+    // 2. Handle sending gifts first (without message)
+    // This handler can also use a transaction if gift creation involves multiple steps (e.g., updating user wallet)
+    // For now, keeping it simple as it's only one 'create' operation.
     socket.on("sendGift", async (data, callback) => {
+      // Note: If this logic becomes complex (e.g., debiting user wallet),
+      // you should wrap this in a transaction as well.
+      const session = await mongoose.startSession();
+      session.startTransaction();
+
       try {
         const senderId = socket.user.id;
         const { receiverId, giftData } = data;
 
-        // Validate required fields
         if (!giftData) {
-          return callback({
-            success: false,
-            error: "Gift data is required",
-          });
+          throw new Error("Gift data is required");
         }
 
         // --- CONVERSATION LOGIC ---
         let conversation = await Conversation.findOne({
           participants: { $all: [senderId, receiverId] },
-        });
+        }).session(session);
+
         if (!conversation) {
-          conversation = await Conversation.create({
-            participants: [senderId, receiverId],
-          });
+          [conversation] = await Conversation.create(
+            [{ participants: [senderId, receiverId] }],
+            { session }
+          );
         }
 
         // --- GIFT CREATION ---
-        const giftRecord = await Gift.create({
-          senderId,
-          receiverId,
-          type: giftData.type || "gold",
-          name: giftData.name || "Gift",
-          icon: giftData.icon || null,
-          amount: giftData.amount || 0,
-          pricePerUnitAtGift: giftData.pricePerUnitAtGift || 0,
-          quantity: giftData.quantity || 0,
-          valueInINR: giftData.valueInINR || 0,
-          orderId: giftData.orderId || null,
-          status: "pending",
-          note: giftData.note || null,
-          conversationId: conversation._id,
-        });
+        const [giftRecord] = await Gift.create(
+          [
+            {
+              senderId,
+              receiverId,
+              type: giftData.type || "gold",
+              name: giftData.name || "Gift",
+              icon: giftData.icon || null,
+              amount: giftData.amount || 0,
+              pricePerUnitAtGift: giftData.pricePerUnitAtGift || 0,
+              quantity: giftData.quantity || 0,
+              valueInINR: giftData.valueInINR || 0,
+              orderId: giftData.orderId || null,
+              status: "pending",
+              note: giftData.note || null,
+              conversationId: conversation._id,
+            },
+          ],
+          { session }
+        );
+
+        // --- Commit ---
+        await session.commitTransaction();
 
         // Return gift data to sender
         if (callback) {
@@ -77,13 +90,23 @@ function initChatSocket(io) {
           });
         }
       } catch (err) {
+        // --- Abort ---
+        await session.abortTransaction();
         console.error("Error creating gift:", err.message);
-        if (callback) callback({ success: false, error: err.message });
+        if (callback) {
+          callback({ success: false, error: err.message });
+        }
+      } finally {
+        await session.endSession();
       }
     });
 
     // 3. Handle sending messages (with optional giftId or gift data)
     socket.on("sendMessage", async (data, callback) => {
+      // Start a session for the transaction
+      const session = await mongoose.startSession();
+      session.startTransaction();
+
       try {
         const senderId = socket.user.id;
         const { receiverId, type, content, mediaUrl, giftId, gift } = data;
@@ -91,50 +114,56 @@ function initChatSocket(io) {
         // --- CONVERSATION LOGIC ---
         let conversation = await Conversation.findOne({
           participants: { $all: [senderId, receiverId] },
-        });
+        }).session(session); // Pass session
+
         if (!conversation) {
-          conversation = await Conversation.create({
-            participants: [senderId, receiverId],
-          });
+          // .create() in a session expects an array
+          [conversation] = await Conversation.create(
+            [{ participants: [senderId, receiverId] }],
+            { session } // Pass session
+          );
         }
 
-        // --- HANDLE GIFT CREATION IF GIFT DATA PROVIDED ---
+        // --- HANDLE GIFT CREATION IF GIFT DATA PROVIDED (Single Call) ---
         let giftRecord = null;
         if (gift) {
           // Create new gift from provided data
-          giftRecord = await Gift.create({
-            senderId,
-            receiverId,
-            type: gift.type || "gold",
-            name: gift.name || "Gift",
-            icon: gift.icon || null,
-            amount: gift.amount || 0,
-            pricePerUnitAtGift: gift.pricePerUnitAtGift || 0,
-            quantity: gift.quantity || 0,
-            valueInINR: gift.valueInINR || 0,
-            orderId: gift.orderId || null,
-            status: "pending",
-            note: gift.note || null,
-            conversationId: conversation._id,
-            isSelfGift: gift.isSelfGift || false,
-          });
+          [giftRecord] = await Gift.create(
+            [
+              {
+                senderId,
+                receiverId,
+                type: gift.type || "gold",
+                name: gift.name || "Gift",
+                icon: gift.icon || null,
+                amount: gift.amount || 0,
+                pricePerUnitAtGift: gift.pricePerUnitAtGift || 0,
+                quantity: gift.quantity || 0,
+                valueInINR: gift.valueInINR || 0,
+                orderId: gift.orderId || null,
+                status: "pending",
+                note: gift.note || null,
+                conversationId: conversation._id,
+                isSelfGift: gift.isSelfGift || false,
+              },
+            ],
+            { session } // Pass session
+          );
         } else if (giftId) {
-          // Validate existing gift
+          // --- VALIDATE EXISTING GIFT (Two-Step Call) ---
           giftRecord = await Gift.findOne({
             _id: giftId,
             senderId: senderId, // Ensure sender owns this gift
             receiverId: receiverId,
-          });
+          }).session(session); // Pass session
 
           if (!giftRecord) {
-            return callback({
-              success: false,
-              error: "Gift not found or access denied",
-            });
+            // This error will be caught, and the transaction will be aborted
+            throw new Error("Gift not found or access denied");
           }
         }
 
-        // Prepare conversation lastMessage and unread counts
+        // --- PREPARE CONVERSATION UPDATE ---
         conversation.lastMessage = {
           text:
             giftRecord || giftId ? "🎁 Gift with message" : encrypt(content),
@@ -144,36 +173,46 @@ function initChatSocket(io) {
           giftRecord || giftId ? "giftWithMessage" : type;
         const currentUnread = conversation.unreadCounts.get(receiverId) || 0;
         conversation.unreadCounts.set(receiverId, currentUnread + 1);
-        await conversation.save();
+
+        await conversation.save({ session }); // Pass session
 
         // --- MESSAGE CREATION ---
-        const newMessage = await Message.create({
-          conversationId: conversation._id,
-          senderId,
-          receiverId,
-          type: giftRecord || giftId ? "giftWithMessage" : type,
-          content: type === "text" && content ? encrypt(content) : content,
-          mediaUrl,
-          giftId: giftRecord ? giftRecord._id : giftId || undefined,
-        });
+        const [newMessage] = await Message.create(
+          [
+            {
+              conversationId: conversation._id,
+              senderId,
+              receiverId,
+              type: giftRecord || giftId ? "giftWithMessage" : type,
+              content: type === "text" && content ? encrypt(content) : content,
+              mediaUrl,
+              giftId: giftRecord ? giftRecord._id : giftId || undefined,
+            },
+          ],
+          { session } // Pass session
+        );
 
-        // Update gift with messageId if gift exists
+        // --- UPDATE GIFT WITH MESSAGE ID ---
         if (giftRecord) {
+          // We use the same giftRecord variable, findByIdAndUpdate returns the new doc
           giftRecord = await Gift.findByIdAndUpdate(
             giftRecord._id,
             { $set: { messageId: newMessage._id } },
-            { new: true }
+            { new: true, session } // Pass session
           );
         }
 
-        // Create a temporary object with the original, unencrypted content for the live socket event
+        // *** COMMIT THE TRANSACTION ***
+        await session.commitTransaction();
+
+        // --- EMIT SOCKET EVENTS (Only if transaction was successful) ---
+
         const unencryptedMessageForSocket = {
           ...newMessage.toObject(),
-          content: content,
+          content: content, // Send unencrypted content back to clients
           gift: giftRecord ? giftRecord.toObject() : undefined,
         };
 
-        // Emit combined gift+message events if gift exists, otherwise regular message
         if (giftRecord) {
           // Combined gift+message events
           io.to(receiverId).emit("receiveGiftWithMessage", {
@@ -201,30 +240,42 @@ function initChatSocket(io) {
         if (callback)
           callback({ success: true, message: unencryptedMessageForSocket });
       } catch (err) {
-        console.error("Error sending message:", err.message);
+        // *** ABORT THE TRANSACTION ***
+        await session.abortTransaction();
+
+        console.error(
+          "Error sending message (transaction aborted):",
+          err.message
+        );
         if (callback) callback({ success: false, error: err.message });
+      } finally {
+        // *** END THE SESSION ***
+        await session.endSession();
       }
     });
 
-    // 3. Handle read receipts (securely)
+    // 4. Handle read receipts (securely)
     socket.on("markAsRead", async ({ conversationId }) => {
       try {
         const userId = socket.user.id; // Use trusted user ID
-        await Message.updateMany(
-          { conversationId, receiverId: userId, isRead: false },
-          { $set: { isRead: true } }
-        );
 
-        await Conversation.updateOne(
-          { _id: conversationId },
-          { $set: { [`unreadCounts.${userId}`]: 0 } }
-        );
+        // These can be run in parallel
+        await Promise.all([
+          Message.updateMany(
+            { conversationId, receiverId: userId, isRead: false },
+            { $set: { isRead: true } }
+          ),
+          Conversation.updateOne(
+            { _id: conversationId },
+            { $set: { [`unreadCounts.${userId}`]: 0 } }
+          ),
+        ]);
       } catch (err) {
         console.error("Error marking as read:", err.message);
       }
     });
 
-    // 4. Handle typing indicators
+    // 5. Handle typing indicators
     socket.on("typing", ({ receiverId }) => {
       io.to(receiverId).emit("userTyping", { senderId: socket.user.id });
     });
@@ -233,8 +284,11 @@ function initChatSocket(io) {
       io.to(receiverId).emit("userStoppedTyping", { senderId: socket.user.id });
     });
 
-    // 5. Handle gift allotment (securely)
+    // 6. Handle gift allotment (securely)
+    // This should also use a transaction if it involves complex multi-step logic
+    // (e.g., updating user's portfolio, creating a log)
     socket.on("allotGift", async ({ giftId, chosenType }) => {
+      // For complex allotment, start a session here
       try {
         const userId = socket.user.id; // Use trusted user ID
         const gift = await Gift.findOneAndUpdate(
@@ -244,6 +298,7 @@ function initChatSocket(io) {
             allottedAt: new Date(),
             convertedTo: chosenType,
             hiddenFromSender: true,
+            status: "allotted", // Update status
           },
           { new: true }
         );
@@ -251,14 +306,20 @@ function initChatSocket(io) {
         if (!gift)
           return socket.emit("error", "Gift not found or already allotted.");
 
+        // If allotment was successful:
         socket.emit("giftAllotted", gift);
-        io.to(gift.senderId).emit("giftAccepted", { giftId: gift._id });
+        // Let the sender know their gift was accepted
+        io.to(gift.senderId).emit("giftAccepted", {
+          giftId: gift._id,
+          conversationId: gift.conversationId,
+        });
       } catch (err) {
         console.error("Error allotting gift:", err.message);
+        socket.emit("error", "Failed to allot gift.");
       }
     });
 
-    // 6. Handle user disconnection
+    // 7. Handle user disconnection
     socket.on("disconnect", () => {
       const userId = socket.user.id;
       if (userId) {
