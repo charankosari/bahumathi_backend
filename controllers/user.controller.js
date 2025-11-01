@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const User = require("../models/user.model");
 const asyncHandler = require("../middlewares/asyncHandler");
 const sendJwtToken = require("../utils/sendJwtToken");
@@ -666,9 +667,14 @@ exports.getSuggestionsFromGifts = asyncHandler(async (req, res, next) => {
 
   const userId = req.user.id;
 
+  // Convert userId to ObjectId if it's a string
+  const userIdObj =
+    typeof userId === "string" ? new mongoose.Types.ObjectId(userId) : userId;
+
   // 1) Suggestions: users who SENT gifts to current user (receiverId === userId)
+  // These are people who gifted you, so they should be suggested for gifting back
   const suggestionsAgg = Gift.aggregate([
-    { $match: { receiverId: userId, isSelfGift: false } },
+    { $match: { receiverId: userIdObj, isSelfGift: false } },
     { $sort: { createdAt: -1 } },
     {
       $group: {
@@ -676,12 +682,12 @@ exports.getSuggestionsFromGifts = asyncHandler(async (req, res, next) => {
         lastGift: { $first: "$$ROOT" },
       },
     },
-    { $limit: 5 },
+    { $limit: 10 },
   ]);
 
   // 2) Recents: users the current user SENT gifts to (senderId === userId)
   const recentsAgg = Gift.aggregate([
-    { $match: { senderId: userId, isSelfGift: false } },
+    { $match: { senderId: userIdObj, isSelfGift: false } },
     { $sort: { createdAt: -1 } },
     {
       $group: {
@@ -696,6 +702,15 @@ exports.getSuggestionsFromGifts = asyncHandler(async (req, res, next) => {
     suggestionsAgg.exec(),
     recentsAgg.exec(),
   ]);
+
+  // Debug logging
+  console.log(`[getSuggestionsFromGifts] userId: ${userId}`);
+  console.log(
+    `[getSuggestionsFromGifts] Found ${suggestionsRaw.length} suggestions (gifts received)`
+  );
+  console.log(
+    `[getSuggestionsFromGifts] Found ${recentsRaw.length} recents (gifts sent)`
+  );
 
   // Extract user IDs and exclude current user
   const suggestionIds = suggestionsRaw
@@ -716,14 +731,40 @@ exports.getSuggestionsFromGifts = asyncHandler(async (req, res, next) => {
       : Promise.resolve([]),
   ]);
 
+  // Create a map of userId to lastGift info from aggregation results
+  const suggestionGiftMap = new Map(
+    suggestionsRaw.map((s) => [String(s._id), s.lastGift])
+  );
+  const recentGiftMap = new Map(
+    recentsRaw.map((r) => [String(r._id), r.lastGift])
+  );
+
   // Maintain order same as aggregation results (most recent first)
-  const orderUsers = (users, ids) => {
-    const map = new Map(users.map((u) => [String(u._id), u]));
-    return ids.map((id) => map.get(String(id))).filter(Boolean);
+  // Include gift date information for suggestions
+  const orderUsersWithGifts = (users, ids, giftMap) => {
+    const userMap = new Map(users.map((u) => [String(u._id), u]));
+    return ids
+      .map((id) => {
+        const user = userMap.get(String(id));
+        if (!user) return null;
+        const userObj = user.toObject();
+        const giftInfo = giftMap.get(String(id));
+        if (giftInfo && giftInfo.createdAt) {
+          userObj.lastGift = {
+            createdAt: giftInfo.createdAt,
+          };
+        }
+        return userObj;
+      })
+      .filter(Boolean);
   };
 
-  const suggestions = orderUsers(suggestionUsers, suggestionIds);
-  const recents = orderUsers(recentUsers, recentIds);
+  const suggestions = orderUsersWithGifts(
+    suggestionUsers,
+    suggestionIds,
+    suggestionGiftMap
+  );
+  const recents = orderUsersWithGifts(recentUsers, recentIds, recentGiftMap);
 
   res.status(200).json({
     success: true,
