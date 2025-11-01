@@ -94,7 +94,10 @@ exports.getMessagesForConversation = async (req, res, next) => {
         const messageObject = msg.toObject();
 
         // decrypt text messages
-        if (messageObject.type === "text" && messageObject.content) {
+        if (
+          ["text", "giftWithMessage"].includes(messageObject.type) &&
+          messageObject.content
+        ) {
           try {
             messageObject.content = decrypt(messageObject.content);
           } catch {
@@ -168,7 +171,10 @@ exports.getMessagesByUserId = async (req, res, next) => {
         const messageObject = msg.toObject();
 
         // decrypt text messages
-        if (messageObject.type === "text" && messageObject.content) {
+        if (
+          ["text", "giftWithMessage"].includes(messageObject.type) &&
+          messageObject.content
+        ) {
           try {
             messageObject.content = decrypt(messageObject.content);
           } catch {
