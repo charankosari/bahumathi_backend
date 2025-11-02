@@ -9,7 +9,9 @@ const errorMiddleware = require("./middlewares/errorMiddleware"); // import it
 app.use(cors({ credentials: true, origin: true }));
 app.use(cookieParser());
 app.use(logger("tiny"));
-app.use(express.json());
+// Increase body size limit for file uploads (50MB)
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 app.get("/", (req, res) => {
   res.send("API is running....");
