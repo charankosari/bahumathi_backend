@@ -110,30 +110,26 @@ const captureHook = async (req, res) => {
     });
 
     // ✅ Send push notification for gift payment
-    // Check if receiver is online - if not, send push notification
-    const onlineUsers = io.sockets.adapter.rooms.get(receiver_id);
-    const isReceiverOnline = onlineUsers && onlineUsers.size > 0;
+    // Always send push notification (even if user is online)
+    // This ensures users get notified even if they're not on the chat screen
+    try {
+      const [receiver, sender] = await Promise.all([
+        User.findById(receiver_id).select("fcmToken"),
+        User.findById(sender_id).select("fullName image"),
+      ]);
 
-    if (!isReceiverOnline) {
-      try {
-        const [receiver, sender] = await Promise.all([
-          User.findById(receiver_id).select("fcmToken"),
-          User.findById(sender_id).select("fullName image"),
-        ]);
-
-        if (receiver?.fcmToken) {
-          await sendGiftNotification(receiver.fcmToken, gift, sender);
-          console.log(
-            `📱 Push notification sent for gift payment to ${receiver_id}`
-          );
-        }
-      } catch (notifError) {
-        console.error(
-          "Error sending push notification for gift payment:",
-          notifError.message
+      if (receiver?.fcmToken) {
+        await sendGiftNotification(receiver.fcmToken, gift, sender);
+        console.log(
+          `📱 Push notification sent for gift payment to ${receiver_id}`
         );
-        // Don't fail the webhook if notification fails
       }
+    } catch (notifError) {
+      console.error(
+        "Error sending push notification for gift payment:",
+        notifError.message
+      );
+      // Don't fail the webhook if notification fails
     }
 
     console.log("✅ Gift processed successfully:", gift_id);

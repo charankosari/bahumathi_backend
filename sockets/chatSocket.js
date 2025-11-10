@@ -88,28 +88,24 @@ function initChatSocket(io) {
         await session.commitTransaction();
 
         // Send push notification for gift (without message)
-        // Check if receiver is online - if not, send push notification
-        const isReceiverOnline = onlineUsers.has(receiverId);
-        if (!isReceiverOnline) {
-          try {
-            const [receiver, sender] = await Promise.all([
-              User.findById(receiverId).select("fcmToken"),
-              User.findById(senderId).select("fullName image"),
-            ]);
+        // Always send push notification (even if user is online)
+        // This ensures users get notified even if they're not on the chat screen
+        try {
+          const [receiver, sender] = await Promise.all([
+            User.findById(receiverId).select("fcmToken"),
+            User.findById(senderId).select("fullName image"),
+          ]);
 
-            if (receiver?.fcmToken) {
-              await sendGiftNotification(receiver.fcmToken, giftRecord, sender);
-              console.log(
-                `📱 Push notification sent for gift to ${receiverId}`
-              );
-            }
-          } catch (notifError) {
-            console.error(
-              "Error sending push notification for gift:",
-              notifError.message
-            );
-            // Don't fail the gift creation if notification fails
+          if (receiver?.fcmToken) {
+            await sendGiftNotification(receiver.fcmToken, giftRecord, sender);
+            console.log(`📱 Push notification sent for gift to ${receiverId}`);
           }
+        } catch (notifError) {
+          console.error(
+            "Error sending push notification for gift:",
+            notifError.message
+          );
+          // Don't fail the gift creation if notification fails
         }
 
         // Return gift data to sender
@@ -258,33 +254,31 @@ function initChatSocket(io) {
           });
 
           // Send push notification for gift with message
-          // Check if receiver is online - if not, send push notification
-          const isReceiverOnline = onlineUsers.has(receiverId);
-          if (!isReceiverOnline) {
-            try {
-              const [receiver, sender] = await Promise.all([
-                User.findById(receiverId).select("fcmToken"),
-                User.findById(senderId).select("fullName image"),
-              ]);
+          // Always send push notification (even if user is online)
+          // This ensures users get notified even if they're not on the chat screen
+          try {
+            const [receiver, sender] = await Promise.all([
+              User.findById(receiverId).select("fcmToken"),
+              User.findById(senderId).select("fullName image"),
+            ]);
 
-              if (receiver?.fcmToken) {
-                await sendGiftWithMessageNotification(
-                  receiver.fcmToken,
-                  giftRecord,
-                  newMessage,
-                  sender
-                );
-                console.log(
-                  `📱 Push notification sent for gift with message to ${receiverId}`
-                );
-              }
-            } catch (notifError) {
-              console.error(
-                "Error sending push notification for gift with message:",
-                notifError.message
+            if (receiver?.fcmToken) {
+              await sendGiftWithMessageNotification(
+                receiver.fcmToken,
+                giftRecord,
+                newMessage,
+                sender
               );
-              // Don't fail the message send if notification fails
+              console.log(
+                `📱 Push notification sent for gift with message to ${receiverId}`
+              );
             }
+          } catch (notifError) {
+            console.error(
+              "Error sending push notification for gift with message:",
+              notifError.message
+            );
+            // Don't fail the message send if notification fails
           }
         } else {
           // Regular message events
@@ -298,32 +292,30 @@ function initChatSocket(io) {
           });
 
           // Send push notification for regular message
-          // Check if receiver is online - if not, send push notification
-          const isReceiverOnline = onlineUsers.has(receiverId);
-          if (!isReceiverOnline) {
-            try {
-              const [receiver, sender] = await Promise.all([
-                User.findById(receiverId).select("fcmToken"),
-                User.findById(senderId).select("fullName image"),
-              ]);
+          // Always send push notification (even if user is online)
+          // This ensures users get notified even if they're not on the chat screen
+          try {
+            const [receiver, sender] = await Promise.all([
+              User.findById(receiverId).select("fcmToken"),
+              User.findById(senderId).select("fullName image"),
+            ]);
 
-              if (receiver?.fcmToken) {
-                await sendMessageNotification(
-                  receiver.fcmToken,
-                  newMessage,
-                  sender
-                );
-                console.log(
-                  `📱 Push notification sent for message to ${receiverId}`
-                );
-              }
-            } catch (notifError) {
-              console.error(
-                "Error sending push notification for message:",
-                notifError.message
+            if (receiver?.fcmToken) {
+              await sendMessageNotification(
+                receiver.fcmToken,
+                newMessage,
+                sender
               );
-              // Don't fail the message send if notification fails
+              console.log(
+                `📱 Push notification sent for message to ${receiverId}`
+              );
             }
+          } catch (notifError) {
+            console.error(
+              "Error sending push notification for message:",
+              notifError.message
+            );
+            // Don't fail the message send if notification fails
           }
         }
 
