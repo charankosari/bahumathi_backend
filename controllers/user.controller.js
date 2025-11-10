@@ -341,6 +341,7 @@ exports.verifyMobileForGoogleAuth = asyncHandler(async (req, res, next) => {
   const otp = generateOtp();
   const hashedOtp = await hashOtp(otp);
   const otpExpires = Date.now() + 10 * 60 * 1000;
+  console.log("OTP:", otp);
 
   // Update user with mobile number and OTP
   user.number = number;
