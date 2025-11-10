@@ -45,4 +45,6 @@ router
   .route("/me/generate-qr")
   .post(isAuthorized, userController.generateUserQr);
 
+router.route("/me/fcm-token").post(isAuthorized, userController.updateFcmToken);
+
 module.exports = router;

@@ -56,6 +56,10 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
+  fcmToken: {
+    type: String,
+    sparse: true, // Allows multiple null values, but unique if a value is present
+  },
   createdAt: {
     type: Date,
     default: Date.now,

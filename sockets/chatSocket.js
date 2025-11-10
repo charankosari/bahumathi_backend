@@ -3,6 +3,12 @@ const { encrypt } = require("../utils/crypto.util");
 const Message = require("../models/Message");
 const Gift = require("../models/Gift");
 const Conversation = require("../models/Conversation");
+const User = require("../models/user.model");
+const {
+  sendMessageNotification,
+  sendGiftNotification,
+  sendGiftWithMessageNotification,
+} = require("../services/fcm.service");
 
 function initChatSocket(io) {
   const onlineUsers = new Map(); // Tracks userId -> socketId
@@ -80,6 +86,31 @@ function initChatSocket(io) {
 
         // --- Commit ---
         await session.commitTransaction();
+
+        // Send push notification for gift (without message)
+        // Check if receiver is online - if not, send push notification
+        const isReceiverOnline = onlineUsers.has(receiverId);
+        if (!isReceiverOnline) {
+          try {
+            const [receiver, sender] = await Promise.all([
+              User.findById(receiverId).select("fcmToken"),
+              User.findById(senderId).select("fullName image"),
+            ]);
+
+            if (receiver?.fcmToken) {
+              await sendGiftNotification(receiver.fcmToken, giftRecord, sender);
+              console.log(
+                `📱 Push notification sent for gift to ${receiverId}`
+              );
+            }
+          } catch (notifError) {
+            console.error(
+              "Error sending push notification for gift:",
+              notifError.message
+            );
+            // Don't fail the gift creation if notification fails
+          }
+        }
 
         // Return gift data to sender
         if (callback) {
@@ -225,6 +256,36 @@ function initChatSocket(io) {
             gift: giftRecord,
             conversation,
           });
+
+          // Send push notification for gift with message
+          // Check if receiver is online - if not, send push notification
+          const isReceiverOnline = onlineUsers.has(receiverId);
+          if (!isReceiverOnline) {
+            try {
+              const [receiver, sender] = await Promise.all([
+                User.findById(receiverId).select("fcmToken"),
+                User.findById(senderId).select("fullName image"),
+              ]);
+
+              if (receiver?.fcmToken) {
+                await sendGiftWithMessageNotification(
+                  receiver.fcmToken,
+                  giftRecord,
+                  newMessage,
+                  sender
+                );
+                console.log(
+                  `📱 Push notification sent for gift with message to ${receiverId}`
+                );
+              }
+            } catch (notifError) {
+              console.error(
+                "Error sending push notification for gift with message:",
+                notifError.message
+              );
+              // Don't fail the message send if notification fails
+            }
+          }
         } else {
           // Regular message events
           io.to(receiverId).emit("receiveMessage", {
@@ -235,6 +296,35 @@ function initChatSocket(io) {
             message: unencryptedMessageForSocket,
             conversation,
           });
+
+          // Send push notification for regular message
+          // Check if receiver is online - if not, send push notification
+          const isReceiverOnline = onlineUsers.has(receiverId);
+          if (!isReceiverOnline) {
+            try {
+              const [receiver, sender] = await Promise.all([
+                User.findById(receiverId).select("fcmToken"),
+                User.findById(senderId).select("fullName image"),
+              ]);
+
+              if (receiver?.fcmToken) {
+                await sendMessageNotification(
+                  receiver.fcmToken,
+                  newMessage,
+                  sender
+                );
+                console.log(
+                  `📱 Push notification sent for message to ${receiverId}`
+                );
+              }
+            } catch (notifError) {
+              console.error(
+                "Error sending push notification for message:",
+                notifError.message
+              );
+              // Don't fail the message send if notification fails
+            }
+          }
         }
 
         if (callback)

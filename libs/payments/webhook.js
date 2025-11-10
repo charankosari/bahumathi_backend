@@ -2,7 +2,9 @@ const { io } = require("../../server");
 const Gift = require("../../models/Gift");
 const Message = require("../../models/Message");
 const Conversation = require("../../models/Conversation");
+const User = require("../../models/user.model");
 const { validateSignature } = require("./razorpay");
+const { sendGiftNotification } = require("../../services/fcm.service");
 
 const captureHook = async (req, res) => {
   try {
@@ -101,11 +103,38 @@ const captureHook = async (req, res) => {
     conversation.unreadCounts?.set(receiver_id, currentUnread + 1);
     await conversation.save();
 
-    // ✅ Emit message to receiver
+    // ✅ Emit message to receiver via socket
     io.to(receiver_id).emit("receiveMessage", {
       message: newMessage,
       conversation,
     });
+
+    // ✅ Send push notification for gift payment
+    // Check if receiver is online - if not, send push notification
+    const onlineUsers = io.sockets.adapter.rooms.get(receiver_id);
+    const isReceiverOnline = onlineUsers && onlineUsers.size > 0;
+
+    if (!isReceiverOnline) {
+      try {
+        const [receiver, sender] = await Promise.all([
+          User.findById(receiver_id).select("fcmToken"),
+          User.findById(sender_id).select("fullName image"),
+        ]);
+
+        if (receiver?.fcmToken) {
+          await sendGiftNotification(receiver.fcmToken, gift, sender);
+          console.log(
+            `📱 Push notification sent for gift payment to ${receiver_id}`
+          );
+        }
+      } catch (notifError) {
+        console.error(
+          "Error sending push notification for gift payment:",
+          notifError.message
+        );
+        // Don't fail the webhook if notification fails
+      }
+    }
 
     console.log("✅ Gift processed successfully:", gift_id);
     return res.status(200).json({ success: true });

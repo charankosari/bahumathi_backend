@@ -805,3 +805,39 @@ exports.generateUserQr = asyncHandler(async (req, res, next) => {
     return next(e);
   }
 });
+
+// ========== UPDATE FCM TOKEN ==========
+exports.updateFcmToken = asyncHandler(async (req, res, next) => {
+  const { fcmToken } = req.body;
+  const userId = req.user?.id;
+
+  if (!userId) {
+    const err = new Error("User not authenticated");
+    err.statusCode = 401;
+    return next(err);
+  }
+
+  if (!fcmToken) {
+    const err = new Error("FCM token is required");
+    err.statusCode = 400;
+    return next(err);
+  }
+
+  const user = await User.findById(userId);
+  if (!user) {
+    const err = new Error("User not found");
+    err.statusCode = 404;
+    return next(err);
+  }
+
+  // Update FCM token
+  user.fcmToken = fcmToken;
+  await user.save({ validateBeforeSave: false });
+
+  console.log(`✅ FCM token updated for user ${userId}`);
+
+  res.status(200).json({
+    success: true,
+    message: "FCM token updated successfully",
+  });
+});
