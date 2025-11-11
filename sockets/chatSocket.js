@@ -435,12 +435,26 @@ function initChatSocket(io) {
 
         // If receiverNumber is provided, try to find user by phone number
         if (!actualReceiverId && actualReceiverNumber) {
+          console.log(
+            `🔍 [sendMessage] Searching for user with phone number: ${actualReceiverNumber}`
+          );
           const userByNumber = await User.findOne({
             number: actualReceiverNumber,
             active: true,
           }).session(session);
           if (userByNumber) {
-            actualReceiverId = userByNumber._id;
+            // Ensure _id is converted to ObjectId if needed
+            actualReceiverId =
+              userByNumber._id instanceof mongoose.Types.ObjectId
+                ? userByNumber._id
+                : new mongoose.Types.ObjectId(userByNumber._id);
+            console.log(
+              `✅ [sendMessage] Found registered user: ${actualReceiverId}`
+            );
+          } else {
+            console.log(
+              `ℹ️ [sendMessage] No registered user found for phone number: ${actualReceiverNumber}`
+            );
           }
         }
 
@@ -566,16 +580,54 @@ function initChatSocket(io) {
           conversation.lastMessage = {
             text:
               giftRecord || giftId ? "🎁 Gift with message" : encrypt(content),
-            sender: senderId,
+            sender: senderObjectId, // Use ObjectId, not string
           };
           conversation.lastMessageType =
             giftRecord || giftId ? "giftWithMessage" : type;
-          // Convert actualReceiverId to string for Mongoose Map (only if it exists)
-          if (actualReceiverId) {
-            const receiverIdString = actualReceiverId.toString();
-            const currentUnread =
-              conversation.unreadCounts.get(receiverIdString) || 0;
-            conversation.unreadCounts.set(receiverIdString, currentUnread + 1);
+          // Convert actualReceiverId to string for Mongoose Map (only if it exists and is a registered user)
+          // For phone numbers (non-registered users), don't update unreadCounts
+          // IMPORTANT: Only update unreadCounts if actualReceiverId is a valid ObjectId
+          if (
+            actualReceiverId &&
+            mongoose.Types.ObjectId.isValid(actualReceiverId)
+          ) {
+            // Ensure it's a string for the map key - Mongoose Maps only accept strings
+            let receiverIdString;
+            if (actualReceiverId instanceof mongoose.Types.ObjectId) {
+              receiverIdString = actualReceiverId.toString();
+            } else if (typeof actualReceiverId === "string") {
+              // If it's already a string, use it directly (already validated as valid ObjectId)
+              receiverIdString = actualReceiverId;
+            } else {
+              // Convert to string, but validate it's a valid ObjectId string
+              receiverIdString = String(actualReceiverId);
+              if (!mongoose.Types.ObjectId.isValid(receiverIdString)) {
+                console.warn(
+                  `⚠️ [sendMessage] actualReceiverId converted to string "${receiverIdString}" is not a valid ObjectId, skipping unreadCounts update`
+                );
+                receiverIdString = null;
+              }
+            }
+
+            if (receiverIdString) {
+              const currentUnread =
+                conversation.unreadCounts.get(receiverIdString) || 0;
+              conversation.unreadCounts.set(
+                receiverIdString,
+                currentUnread + 1
+              );
+              console.log(
+                `📊 [sendMessage] Updated unreadCounts for receiver: ${receiverIdString} = ${
+                  currentUnread + 1
+                }`
+              );
+            }
+          } else {
+            console.log(
+              `ℹ️ [sendMessage] Skipping unreadCounts update - receiver is not a registered user (phone number: ${
+                actualReceiverNumber || "N/A"
+              }, actualReceiverId: ${actualReceiverId || "null"})`
+            );
           }
 
           await conversation.save({ session }); // Pass session
