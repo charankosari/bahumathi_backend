@@ -225,13 +225,25 @@ const sendMulticastPushNotification = async (
  * @param {Object} senderData - Sender user data
  * @returns {Promise<Object>}
  */
-const sendMessageNotification = async (fcmToken, messageData, senderData) => {
+const sendMessageNotification = async (
+  fcmToken,
+  messageData,
+  senderData,
+  unencryptedContent = null
+) => {
   const senderName = senderData?.fullName || "Someone";
   const messageType = messageData?.type || "text";
 
   let notificationBody = "";
+  // Use unencrypted content if provided, otherwise try to use content from messageData
+  // For text messages, prefer unencrypted content
   if (messageType === "text") {
-    notificationBody = messageData?.content || "Sent you a message";
+    notificationBody =
+      unencryptedContent || messageData?.content || "Sent you a message";
+    // Limit message length to 100 characters for notification
+    if (notificationBody.length > 100) {
+      notificationBody = notificationBody.substring(0, 97) + "...";
+    }
   } else if (messageType === "image") {
     notificationBody = "📷 Sent you a photo";
   } else if (messageType === "voice") {
@@ -254,6 +266,7 @@ const sendMessageNotification = async (fcmToken, messageData, senderData) => {
       conversationId: messageData?.conversationId?.toString() || "",
       senderId: senderData?._id?.toString() || "",
       senderName: senderName,
+      senderImage: senderData?.image?.toString() || "",
       messageType: messageType,
     }
   );
@@ -271,15 +284,16 @@ const sendGiftNotification = async (fcmToken, giftData, senderData) => {
   const giftType = giftData?.type || "gold";
   const amount = giftData?.valueInINR || 0;
 
-  const giftTypeEmoji = giftType === "gold" ? "💰" : "📈";
-  const giftTypeName =
-    giftType === "gold" ? "Digital Gold" : "Top 50 Companies";
+  const giftTypeName = giftType === "gold" ? "gold" : "stocks";
+
+  // Shortened notification: "A gift sent by [username] in gold/stocks worth ₹2500"
+  const notificationBody = `A gift sent by ${senderName} in ${giftTypeName} worth ₹${amount.toLocaleString()}`;
 
   return await sendPushNotification(
     fcmToken,
     {
       title: "🎁 New Gift Received!",
-      body: `${senderName} sent you ${giftTypeEmoji} ₹${amount.toLocaleString()} worth of ${giftTypeName}`,
+      body: notificationBody,
     },
     {
       type: "gift",
@@ -287,6 +301,7 @@ const sendGiftNotification = async (fcmToken, giftData, senderData) => {
       conversationId: giftData?.conversationId?.toString() || "",
       senderId: senderData?._id?.toString() || "",
       senderName: senderName,
+      senderImage: senderData?.image?.toString() || "",
       giftType: giftType,
       amount: amount.toString(),
     }
@@ -305,21 +320,23 @@ const sendGiftWithMessageNotification = async (
   fcmToken,
   giftData,
   messageData,
-  senderData
+  senderData,
+  unencryptedContent = null
 ) => {
   const senderName = senderData?.fullName || "Someone";
   const giftType = giftData?.type || "gold";
   const amount = giftData?.valueInINR || 0;
 
-  const giftTypeEmoji = giftType === "gold" ? "💰" : "📈";
-  const giftTypeName =
-    giftType === "gold" ? "Digital Gold" : "Top 50 Companies";
+  const giftTypeName = giftType === "gold" ? "gold" : "stocks";
+
+  // Shortened notification: "A gift sent by [username] in gold/stocks worth ₹2500"
+  const notificationBody = `A gift sent by ${senderName} in ${giftTypeName} worth ₹${amount.toLocaleString()}`;
 
   return await sendPushNotification(
     fcmToken,
     {
       title: "🎁 Gift with Message!",
-      body: `${senderName} sent you ${giftTypeEmoji} ₹${amount.toLocaleString()} worth of ${giftTypeName} with a message`,
+      body: notificationBody,
     },
     {
       type: "giftWithMessage",
@@ -328,6 +345,7 @@ const sendGiftWithMessageNotification = async (
       conversationId: giftData?.conversationId?.toString() || "",
       senderId: senderData?._id?.toString() || "",
       senderName: senderName,
+      senderImage: senderData?.image?.toString() || "",
       giftType: giftType,
       amount: amount.toString(),
     }

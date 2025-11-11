@@ -263,11 +263,13 @@ function initChatSocket(io) {
             ]);
 
             if (receiver?.fcmToken) {
+              // Pass unencrypted content for notification
               await sendGiftWithMessageNotification(
                 receiver.fcmToken,
                 giftRecord,
                 newMessage,
-                sender
+                sender,
+                content // Pass unencrypted content
               );
               console.log(
                 `📱 Push notification sent for gift with message to ${receiverId}`
@@ -301,10 +303,12 @@ function initChatSocket(io) {
             ]);
 
             if (receiver?.fcmToken) {
+              // Pass unencrypted content for notification
               await sendMessageNotification(
                 receiver.fcmToken,
                 newMessage,
-                sender
+                sender,
+                content // Pass unencrypted content
               );
               console.log(
                 `📱 Push notification sent for message to ${receiverId}`
