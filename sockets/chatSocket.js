@@ -47,6 +47,13 @@ function initChatSocket(io) {
         const senderId = socket.user.id;
         const { receiverId, receiverNumber, giftData } = data;
 
+        console.log("🎁 [sendGift] Received data:", {
+          senderId,
+          receiverId,
+          receiverNumber,
+          hasGiftData: !!giftData,
+        });
+
         if (!giftData) {
           throw new Error("Gift data is required");
         }
@@ -71,80 +78,160 @@ function initChatSocket(io) {
           ? normalizePhoneNumber(receiverNumber)
           : null;
 
+        console.log(
+          `📞 [sendGift] Initial receiverNumber normalized: ${actualReceiverNumber}`
+        );
+
         // Validate receiverId - it must be a valid ObjectId if provided
         if (receiverId) {
-          if (mongoose.Types.ObjectId.isValid(receiverId)) {
+          const isValidObjectId = mongoose.Types.ObjectId.isValid(receiverId);
+          console.log(
+            `🔍 [sendGift] receiverId validation: "${receiverId}" (type: ${typeof receiverId}) is valid ObjectId: ${isValidObjectId}`
+          );
+          if (isValidObjectId) {
             actualReceiverId = new mongoose.Types.ObjectId(receiverId);
+            console.log(
+              `✅ [sendGift] Converted receiverId to ObjectId: ${actualReceiverId}`
+            );
           } else {
             // If receiverId is not a valid ObjectId, treat it as a phone number
             console.warn(
-              `⚠️ receiverId "${receiverId}" is not a valid ObjectId, treating as phone number`
+              `⚠️ [sendGift] receiverId "${receiverId}" is not a valid ObjectId, treating as phone number`
             );
             actualReceiverNumber = normalizePhoneNumber(receiverId);
+            console.log(
+              `📞 [sendGift] Normalized phone number from receiverId: ${actualReceiverNumber}`
+            );
           }
         }
 
         // If receiverNumber is provided, try to find user by phone number
         if (!actualReceiverId && actualReceiverNumber) {
+          console.log(
+            `🔍 [sendGift] Searching for user with phone number: ${actualReceiverNumber}`
+          );
           const userByNumber = await User.findOne({
             number: actualReceiverNumber,
             active: true,
           }).session(session);
           if (userByNumber) {
             actualReceiverId = userByNumber._id;
+            console.log(
+              `✅ [sendGift] Found registered user: ${actualReceiverId}`
+            );
+          } else {
+            console.log(
+              `ℹ️ [sendGift] No registered user found for phone number: ${actualReceiverNumber}`
+            );
           }
         }
 
         let conversation = null;
         // Create conversation even if receiver doesn't exist (for phone number)
         // Ensure senderId is a valid ObjectId
+        console.log(
+          `🔍 [sendGift] Validating senderId: "${senderId}" (type: ${typeof senderId})`
+        );
         if (!mongoose.Types.ObjectId.isValid(senderId)) {
+          console.error(
+            `❌ [sendGift] Invalid senderId: "${senderId}" is not a valid ObjectId`
+          );
           throw new Error(
             `Invalid senderId: "${senderId}" is not a valid ObjectId`
           );
         }
         const senderObjectId = new mongoose.Types.ObjectId(senderId);
+        console.log(
+          `✅ [sendGift] senderObjectId: ${senderObjectId} (type: ${senderObjectId.constructor.name})`
+        );
+        console.log(
+          `📊 [sendGift] Final values - actualReceiverId: ${
+            actualReceiverId ? actualReceiverId.toString() : null
+          }, actualReceiverNumber: ${actualReceiverNumber}`
+        );
 
         if (actualReceiverId) {
           // Ensure receiverId is also a valid ObjectId
+          console.log(
+            `🔍 [sendGift] Processing with actualReceiverId: ${actualReceiverId} (type: ${actualReceiverId.constructor.name})`
+          );
           const receiverObjectId = mongoose.Types.ObjectId.isValid(
             actualReceiverId
           )
             ? new mongoose.Types.ObjectId(actualReceiverId)
             : actualReceiverId;
 
+          console.log(
+            `📋 [sendGift] Creating conversation with participants: [${senderObjectId}, ${receiverObjectId}]`
+          );
           conversation = await Conversation.findOne({
             participants: { $all: [senderObjectId, receiverObjectId] },
           }).session(session);
 
           if (!conversation) {
+            console.log(
+              `🆕 [sendGift] Creating new conversation with participants array: [${senderObjectId}, ${receiverObjectId}]`
+            );
             [conversation] = await Conversation.create(
               [{ participants: [senderObjectId, receiverObjectId] }],
               { session }
             );
+            console.log(
+              `✅ [sendGift] Conversation created successfully: ${conversation._id}`
+            );
+          } else {
+            console.log(
+              `📂 [sendGift] Found existing conversation: ${conversation._id}`
+            );
           }
         } else if (actualReceiverNumber) {
           // Create conversation with phone number for non-registered user
+          console.log(
+            `📞 [sendGift] Processing with phone number: ${actualReceiverNumber}`
+          );
+          console.log(
+            `📋 [sendGift] Creating conversation with senderObjectId: ${senderObjectId}, receiverNumber: ${actualReceiverNumber}`
+          );
           conversation = await Conversation.findOne({
             senderId: senderObjectId,
             receiverNumber: actualReceiverNumber,
           }).session(session);
 
           if (!conversation) {
-            [conversation] = await Conversation.create(
-              [
-                {
-                  participants: [senderObjectId], // Use ObjectId, not raw senderId
-                  senderId: senderObjectId,
-                  receiverNumber: actualReceiverNumber,
-                },
-              ],
-              { session }
-            );
+            const conversationData = {
+              participants: [senderObjectId], // Use ObjectId, not raw senderId
+              senderId: senderObjectId,
+              receiverNumber: actualReceiverNumber,
+            };
             console.log(
-              `✅ Created conversation with phone number ${actualReceiverNumber} for sender ${senderObjectId}`
+              `🆕 [sendGift] Creating new conversation with data:`,
+              JSON.stringify(
+                {
+                  ...conversationData,
+                  participants: conversationData.participants.map((p) =>
+                    p.toString()
+                  ),
+                  senderId: conversationData.senderId.toString(),
+                },
+                null,
+                2
+              )
+            );
+            [conversation] = await Conversation.create([conversationData], {
+              session,
+            });
+            console.log(
+              `✅ [sendGift] Created conversation with phone number ${actualReceiverNumber} for sender ${senderObjectId}, conversationId: ${conversation._id}`
+            );
+          } else {
+            console.log(
+              `📂 [sendGift] Found existing conversation: ${conversation._id}`
             );
           }
+        } else {
+          console.error(
+            `❌ [sendGift] Neither actualReceiverId nor actualReceiverNumber is set!`
+          );
         }
 
         // --- GIFT CREATION ---
@@ -248,7 +335,20 @@ function initChatSocket(io) {
       } catch (err) {
         // --- Abort ---
         await session.abortTransaction();
-        console.error("Error creating gift:", err.message);
+        console.error("❌ [sendGift] Error creating gift:", err.message);
+        console.error("❌ [sendGift] Error stack:", err.stack);
+        console.error("❌ [sendGift] Error details:", {
+          name: err.name,
+          message: err.message,
+          senderId,
+          receiverId,
+          receiverNumber,
+          actualReceiverId: actualReceiverId
+            ? actualReceiverId.toString()
+            : null,
+          actualReceiverNumber,
+          senderObjectId: senderObjectId ? senderObjectId.toString() : null,
+        });
         if (callback) {
           callback({ success: false, error: err.message });
         }
@@ -274,6 +374,17 @@ function initChatSocket(io) {
           giftId,
           gift,
         } = data;
+
+        console.log("💬 [sendMessage] Received data:", {
+          senderId,
+          receiverId,
+          receiverNumber,
+          type,
+          hasContent: !!content,
+          hasMediaUrl: !!mediaUrl,
+          hasGiftId: !!giftId,
+          hasGift: !!gift,
+        });
 
         if (!receiverId && !receiverNumber) {
           throw new Error("Either receiverId or receiverNumber is required");
@@ -612,9 +723,17 @@ function initChatSocket(io) {
         await session.abortTransaction();
 
         console.error(
-          "Error sending message (transaction aborted):",
+          "❌ [sendMessage] Error sending message (transaction aborted):",
           err.message
         );
+        console.error("❌ [sendMessage] Error stack:", err.stack);
+        console.error("❌ [sendMessage] Error details:", {
+          name: err.name,
+          message: err.message,
+          senderId,
+          receiverId,
+          receiverNumber,
+        });
         if (callback) callback({ success: false, error: err.message });
       } finally {
         // *** END THE SESSION ***
