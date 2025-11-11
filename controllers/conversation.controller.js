@@ -2,6 +2,8 @@ const axios = require("axios");
 const { decrypt } = require("../utils/crypto.util"); // ✨ IMPORT
 const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
+const UserWithNoAccount = require("../models/UserWithNoAccount");
+const mongoose = require("mongoose");
 
 const UPLOADS_SERVICE_BASE = "http://localhost:4000";
 
@@ -149,9 +151,58 @@ exports.getMessagesByUserId = async (req, res, next) => {
         .json({ success: false, message: "peerId is required" });
     }
 
+    // Normalize phone number helper
+    const normalizePhoneNumber = (rawNumber) => {
+      if (!rawNumber) return null;
+      const str = String(rawNumber);
+      const digits = str.replace(/\D/g, "");
+      if (digits.length >= 10) {
+        return digits.slice(-10);
+      }
+      return null;
+    };
+
+    // Determine actual peer ID - could be ObjectId or phone number
+    let actualPeerId = peerId;
+
+    // Check if peerId is a phone number (10 digits) or ObjectId (24 hex chars)
+    const isPhoneNumber = /^\d{10}$/.test(peerId);
+    const isObjectId =
+      mongoose.Types.ObjectId.isValid(peerId) &&
+      /^[0-9a-fA-F]{24}$/.test(peerId);
+
+    if (isPhoneNumber && !isObjectId) {
+      // peerId is a phone number - find UserWithNoAccount
+      const normalizedNumber = normalizePhoneNumber(peerId);
+      if (normalizedNumber) {
+        const userWithNoAccount = await UserWithNoAccount.findOne({
+          phoneNumber: normalizedNumber,
+        });
+        if (userWithNoAccount) {
+          actualPeerId = userWithNoAccount._id.toString();
+          console.log(
+            `📞 [getMessagesByUserId] Found UserWithNoAccount ${actualPeerId} for phone ${normalizedNumber}`
+          );
+        } else {
+          // No UserWithNoAccount found - return empty messages
+          return res.status(200).json({
+            success: true,
+            messages: [],
+          });
+        }
+      }
+    } else if (!isObjectId) {
+      // Invalid format
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid peerId format. Must be a valid ObjectId or phone number.",
+      });
+    }
+
     // Find the conversation between these two users
     const conversation = await Conversation.findOne({
-      participants: { $all: [userId, peerId] },
+      participants: { $all: [userId, actualPeerId] },
     });
 
     if (!conversation) {
