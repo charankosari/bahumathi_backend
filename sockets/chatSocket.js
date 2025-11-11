@@ -111,6 +111,7 @@ function initChatSocket(io) {
         }
 
         // If receiverNumber is provided, try to find user by phone number
+        // If not found, create/find UserWithNoAccount and use its _id as receiverId
         if (!actualReceiverId && actualReceiverNumber) {
           console.log(
             `🔍 [sendGift] Searching for user with phone number: ${actualReceiverNumber}`
@@ -125,8 +126,36 @@ function initChatSocket(io) {
               `✅ [sendGift] Found registered user: ${actualReceiverId}`
             );
           } else {
+            // No registered user found - create or find UserWithNoAccount
             console.log(
-              `ℹ️ [sendGift] No registered user found for phone number: ${actualReceiverNumber}`
+              `ℹ️ [sendGift] No registered user found for phone number: ${actualReceiverNumber}, creating/finding UserWithNoAccount`
+            );
+            let userWithNoAccount = await UserWithNoAccount.findOne({
+              phoneNumber: actualReceiverNumber,
+            }).session(session);
+            if (!userWithNoAccount) {
+              [userWithNoAccount] = await UserWithNoAccount.create(
+                [
+                  {
+                    phoneNumber: actualReceiverNumber,
+                    gifts: [],
+                    messages: [],
+                  },
+                ],
+                { session }
+              );
+              console.log(
+                `✅ [sendGift] Created UserWithNoAccount: ${userWithNoAccount._id} for phone ${actualReceiverNumber}`
+              );
+            } else {
+              console.log(
+                `✅ [sendGift] Found existing UserWithNoAccount: ${userWithNoAccount._id} for phone ${actualReceiverNumber}`
+              );
+            }
+            // Use UserWithNoAccount._id as receiverId - this is always a valid ObjectId
+            actualReceiverId = userWithNoAccount._id;
+            console.log(
+              `📋 [sendGift] Using UserWithNoAccount._id as receiverId: ${actualReceiverId}`
             );
           }
         }
@@ -201,63 +230,21 @@ function initChatSocket(io) {
               `📂 [sendGift] Found existing conversation: ${conversation._id}`
             );
           }
-        } else if (actualReceiverNumber) {
-          // Create conversation with phone number for non-registered user
-          console.log(
-            `📞 [sendGift] Processing with phone number: ${actualReceiverNumber}`
-          );
-          console.log(
-            `📋 [sendGift] Creating conversation with senderObjectId: ${senderObjectId}, receiverNumber: ${actualReceiverNumber}`
-          );
-          conversation = await Conversation.findOne({
-            senderId: senderObjectId,
-            receiverNumber: actualReceiverNumber,
-          }).session(session);
-
-          if (!conversation) {
-            const conversationData = {
-              participants: [senderObjectId], // Use ObjectId, not raw senderId
-              senderId: senderObjectId,
-              receiverNumber: actualReceiverNumber,
-            };
-            console.log(
-              `🆕 [sendGift] Creating new conversation with data:`,
-              JSON.stringify(
-                {
-                  ...conversationData,
-                  participants: conversationData.participants.map((p) =>
-                    p.toString()
-                  ),
-                  senderId: conversationData.senderId.toString(),
-                },
-                null,
-                2
-              )
-            );
-            [conversation] = await Conversation.create([conversationData], {
-              session,
-            });
-            console.log(
-              `✅ [sendGift] Created conversation with phone number ${actualReceiverNumber} for sender ${senderObjectId}, conversationId: ${conversation._id}`
-            );
-          } else {
-            console.log(
-              `📂 [sendGift] Found existing conversation: ${conversation._id}`
-            );
-          }
         } else {
           console.error(
-            `❌ [sendGift] Neither actualReceiverId nor actualReceiverNumber is set!`
+            `❌ [sendGift] actualReceiverId is not set! This should not happen.`
           );
+          throw new Error("Receiver ID is required");
         }
 
         // --- GIFT CREATION ---
+        // actualReceiverId is always set now (either User._id or UserWithNoAccount._id)
         const [giftRecord] = await Gift.create(
           [
             {
               senderId,
-              receiverId: actualReceiverId || null,
-              receiverNumber: actualReceiverNumber || null,
+              receiverId: actualReceiverId, // Always an ObjectId now
+              receiverNumber: actualReceiverNumber || null, // Keep for reference
               type: giftData.type || "gold",
               name: giftData.name || "Gift",
               icon: giftData.icon || null,
@@ -295,41 +282,44 @@ function initChatSocket(io) {
             }).select("fcmToken fullName image");
           }
 
-          if (receiver?.fcmToken) {
-            await sendGiftNotification(receiver.fcmToken, giftRecord, sender);
-            console.log(
-              `📱 Push notification sent for gift to ${
-                actualReceiverId || actualReceiverNumber
-              }`
-            );
-          } else if (actualReceiverNumber) {
-            console.log(
-              `ℹ️ Gift created for phone number ${actualReceiverNumber}, but no FCM token found. Saving to UserWithNoAccount.`
-            );
-            // Save gift to UserWithNoAccount for when user registers
+          // Check if actualReceiverId is a User (registered) or UserWithNoAccount (non-registered)
+          const isUserWithNoAccount = await UserWithNoAccount.findById(
+            actualReceiverId
+          );
+
+          if (isUserWithNoAccount) {
+            // Receiver is a UserWithNoAccount (non-registered user)
+            // Update UserWithNoAccount to track gift
             try {
-              let userWithNoAccount = await UserWithNoAccount.findOne({
-                phoneNumber: actualReceiverNumber,
-              });
-              if (!userWithNoAccount) {
-                userWithNoAccount = await UserWithNoAccount.create({
-                  phoneNumber: actualReceiverNumber,
-                  gifts: [],
-                });
-              }
-              userWithNoAccount.gifts.push({
+              isUserWithNoAccount.gifts.push({
                 giftId: giftRecord._id,
                 senderId: senderId,
                 createdAt: new Date(),
               });
-              await userWithNoAccount.save();
+              await isUserWithNoAccount.save();
               console.log(
-                `✅ Gift saved to UserWithNoAccount for ${actualReceiverNumber}`
+                `✅ Gift saved to UserWithNoAccount ${actualReceiverId} for phone ${isUserWithNoAccount.phoneNumber}`
               );
             } catch (saveError) {
               console.error(
                 "Error saving gift to UserWithNoAccount:",
                 saveError.message
+              );
+            }
+            // No FCM notification for non-registered users (no FCM token)
+            console.log(
+              `ℹ️ Gift created for non-registered user (phone: ${isUserWithNoAccount.phoneNumber}), no FCM notification sent`
+            );
+          } else {
+            // Receiver is a registered User - try to send FCM notification
+            if (receiver?.fcmToken) {
+              await sendGiftNotification(receiver.fcmToken, giftRecord, sender);
+              console.log(
+                `📱 Push notification sent for gift to ${actualReceiverId}`
+              );
+            } else {
+              console.log(
+                `ℹ️ No FCM token found for registered user ${actualReceiverId}`
               );
             }
           }
@@ -434,6 +424,7 @@ function initChatSocket(io) {
         }
 
         // If receiverNumber is provided, try to find user by phone number
+        // If not found, create/find UserWithNoAccount and use its _id as receiverId
         if (!actualReceiverId && actualReceiverNumber) {
           console.log(
             `🔍 [sendMessage] Searching for user with phone number: ${actualReceiverNumber}`
@@ -452,8 +443,36 @@ function initChatSocket(io) {
               `✅ [sendMessage] Found registered user: ${actualReceiverId}`
             );
           } else {
+            // No registered user found - create or find UserWithNoAccount
             console.log(
-              `ℹ️ [sendMessage] No registered user found for phone number: ${actualReceiverNumber}`
+              `ℹ️ [sendMessage] No registered user found for phone number: ${actualReceiverNumber}, creating/finding UserWithNoAccount`
+            );
+            let userWithNoAccount = await UserWithNoAccount.findOne({
+              phoneNumber: actualReceiverNumber,
+            }).session(session);
+            if (!userWithNoAccount) {
+              [userWithNoAccount] = await UserWithNoAccount.create(
+                [
+                  {
+                    phoneNumber: actualReceiverNumber,
+                    gifts: [],
+                    messages: [],
+                  },
+                ],
+                { session }
+              );
+              console.log(
+                `✅ [sendMessage] Created UserWithNoAccount: ${userWithNoAccount._id} for phone ${actualReceiverNumber}`
+              );
+            } else {
+              console.log(
+                `✅ [sendMessage] Found existing UserWithNoAccount: ${userWithNoAccount._id} for phone ${actualReceiverNumber}`
+              );
+            }
+            // Use UserWithNoAccount._id as receiverId - this is always a valid ObjectId
+            actualReceiverId = userWithNoAccount._id;
+            console.log(
+              `📋 [sendMessage] Using UserWithNoAccount._id as receiverId: ${actualReceiverId}`
             );
           }
         }
@@ -508,31 +527,15 @@ function initChatSocket(io) {
               `✅ [sendMessage] Conversation created: ${conversation._id}`
             );
           }
-        } else if (actualReceiverNumber) {
-          // Create conversation with phone number for non-registered user
-          conversation = await Conversation.findOne({
-            senderId: senderObjectId,
-            receiverNumber: actualReceiverNumber,
-          }).session(session);
-
-          if (!conversation) {
-            [conversation] = await Conversation.create(
-              [
-                {
-                  participants: [senderObjectId], // Use ObjectId, not raw senderId
-                  senderId: senderObjectId,
-                  receiverNumber: actualReceiverNumber,
-                },
-              ],
-              { session }
-            );
-            console.log(
-              `✅ Created conversation with phone number ${actualReceiverNumber} for sender ${senderObjectId}`
-            );
-          }
+        } else {
+          console.error(
+            `❌ [sendMessage] actualReceiverId is not set! This should not happen.`
+          );
+          throw new Error("Receiver ID is required");
         }
 
         // --- HANDLE GIFT CREATION IF GIFT DATA PROVIDED (Single Call) ---
+        // actualReceiverId is always set now (either User._id or UserWithNoAccount._id)
         let giftRecord = null;
         if (gift) {
           // Create new gift from provided data
@@ -540,8 +543,8 @@ function initChatSocket(io) {
             [
               {
                 senderId,
-                receiverId: actualReceiverId || null,
-                receiverNumber: actualReceiverNumber || null,
+                receiverId: actualReceiverId, // Always an ObjectId now
+                receiverNumber: actualReceiverNumber || null, // Keep for reference
                 type: gift.type || "gold",
                 name: gift.name || "Gift",
                 icon: gift.icon || null,
@@ -563,10 +566,7 @@ function initChatSocket(io) {
           giftRecord = await Gift.findOne({
             _id: giftId,
             senderId: senderId, // Ensure sender owns this gift
-            $or: [
-              { receiverId: actualReceiverId },
-              { receiverNumber: actualReceiverNumber },
-            ],
+            receiverId: actualReceiverId, // Always use ObjectId now
           }).session(session); // Pass session
 
           if (!giftRecord) {
@@ -584,51 +584,17 @@ function initChatSocket(io) {
           };
           conversation.lastMessageType =
             giftRecord || giftId ? "giftWithMessage" : type;
-          // Convert actualReceiverId to string for Mongoose Map (only if it exists and is a registered user)
-          // For phone numbers (non-registered users), don't update unreadCounts
-          // IMPORTANT: Only update unreadCounts if actualReceiverId is a valid ObjectId
-          if (
-            actualReceiverId &&
-            mongoose.Types.ObjectId.isValid(actualReceiverId)
-          ) {
-            // Ensure it's a string for the map key - Mongoose Maps only accept strings
-            let receiverIdString;
-            if (actualReceiverId instanceof mongoose.Types.ObjectId) {
-              receiverIdString = actualReceiverId.toString();
-            } else if (typeof actualReceiverId === "string") {
-              // If it's already a string, use it directly (already validated as valid ObjectId)
-              receiverIdString = actualReceiverId;
-            } else {
-              // Convert to string, but validate it's a valid ObjectId string
-              receiverIdString = String(actualReceiverId);
-              if (!mongoose.Types.ObjectId.isValid(receiverIdString)) {
-                console.warn(
-                  `⚠️ [sendMessage] actualReceiverId converted to string "${receiverIdString}" is not a valid ObjectId, skipping unreadCounts update`
-                );
-                receiverIdString = null;
-              }
-            }
-
-            if (receiverIdString) {
-              const currentUnread =
-                conversation.unreadCounts.get(receiverIdString) || 0;
-              conversation.unreadCounts.set(
-                receiverIdString,
-                currentUnread + 1
-              );
-              console.log(
-                `📊 [sendMessage] Updated unreadCounts for receiver: ${receiverIdString} = ${
-                  currentUnread + 1
-                }`
-              );
-            }
-          } else {
-            console.log(
-              `ℹ️ [sendMessage] Skipping unreadCounts update - receiver is not a registered user (phone number: ${
-                actualReceiverNumber || "N/A"
-              }, actualReceiverId: ${actualReceiverId || "null"})`
-            );
-          }
+          // Update unreadCounts - actualReceiverId is always a valid ObjectId now
+          // (either User._id or UserWithNoAccount._id)
+          const receiverIdString = actualReceiverId.toString();
+          const currentUnread =
+            conversation.unreadCounts.get(receiverIdString) || 0;
+          conversation.unreadCounts.set(receiverIdString, currentUnread + 1);
+          console.log(
+            `📊 [sendMessage] Updated unreadCounts for receiver: ${receiverIdString} = ${
+              currentUnread + 1
+            }`
+          );
 
           await conversation.save({ session }); // Pass session
         }
@@ -717,82 +683,83 @@ function initChatSocket(io) {
             }).select("fcmToken fullName image");
           }
 
-          if (receiver?.fcmToken) {
-            if (giftRecord) {
-              // Pass unencrypted content for notification
-              await sendGiftWithMessageNotification(
-                receiver.fcmToken,
-                giftRecord,
-                newMessage || giftRecord, // Use giftRecord if no message
-                sender,
-                content // Pass unencrypted content
-              );
-              console.log(
-                `📱 Push notification sent for gift with message to ${
-                  actualReceiverId || actualReceiverNumber
-                }`
-              );
-            } else if (newMessage) {
-              // Pass unencrypted content for notification
-              await sendMessageNotification(
-                receiver.fcmToken,
-                newMessage,
-                sender,
-                content // Pass unencrypted content
-              );
-              console.log(
-                `📱 Push notification sent for message to ${
-                  actualReceiverId || actualReceiverNumber
-                }`
-              );
-            }
-          } else if (actualReceiverNumber && giftRecord) {
-            // Gift created for non-registered user
-            console.log(
-              `ℹ️ Gift with message created for phone number ${actualReceiverNumber}, but no FCM token found. Saving to UserWithNoAccount.`
-            );
-            // Save gift and message to UserWithNoAccount for when user registers
+          // Check if actualReceiverId is a User (registered) or UserWithNoAccount (non-registered)
+          const isUserWithNoAccount = await UserWithNoAccount.findById(
+            actualReceiverId
+          );
+
+          if (isUserWithNoAccount) {
+            // Receiver is a UserWithNoAccount (non-registered user)
+            // Update UserWithNoAccount to track gifts/messages
             try {
-              let userWithNoAccount = await UserWithNoAccount.findOne({
-                phoneNumber: actualReceiverNumber,
-              });
-              if (!userWithNoAccount) {
-                userWithNoAccount = await UserWithNoAccount.create({
-                  phoneNumber: actualReceiverNumber,
-                  gifts: [],
-                  messages: [],
+              if (giftRecord) {
+                isUserWithNoAccount.gifts.push({
+                  giftId: giftRecord._id,
+                  senderId: senderId,
+                  createdAt: new Date(),
                 });
               }
-              userWithNoAccount.gifts.push({
-                giftId: giftRecord._id,
-                senderId: senderId,
-                createdAt: new Date(),
-              });
               if (newMessage) {
-                userWithNoAccount.messages.push({
+                isUserWithNoAccount.messages.push({
                   messageId: newMessage._id,
                   senderId: senderId,
                   content: content,
                   type: type,
                   createdAt: new Date(),
                 });
-              } else if (content) {
-                // If message wasn't created (no conversation), save it anyway
-                userWithNoAccount.messages.push({
+              } else if (content && !giftRecord) {
+                // If message wasn't created but content exists, save it anyway
+                isUserWithNoAccount.messages.push({
                   senderId: senderId,
                   content: content,
                   type: type,
                   createdAt: new Date(),
                 });
               }
-              await userWithNoAccount.save();
+              await isUserWithNoAccount.save();
               console.log(
-                `✅ Gift with message saved to UserWithNoAccount for ${actualReceiverNumber}`
+                `✅ Gift/message saved to UserWithNoAccount ${actualReceiverId} for phone ${isUserWithNoAccount.phoneNumber}`
               );
             } catch (saveError) {
               console.error(
                 "Error saving gift/message to UserWithNoAccount:",
                 saveError.message
+              );
+            }
+            // No FCM notification for non-registered users (no FCM token)
+            console.log(
+              `ℹ️ Gift/message created for non-registered user (phone: ${isUserWithNoAccount.phoneNumber}), no FCM notification sent`
+            );
+          } else {
+            // Receiver is a registered User - try to send FCM notification
+            if (receiver?.fcmToken) {
+              if (giftRecord) {
+                // Pass unencrypted content for notification
+                await sendGiftWithMessageNotification(
+                  receiver.fcmToken,
+                  giftRecord,
+                  newMessage || giftRecord, // Use giftRecord if no message
+                  sender,
+                  content // Pass unencrypted content
+                );
+                console.log(
+                  `📱 Push notification sent for gift with message to ${actualReceiverId}`
+                );
+              } else if (newMessage) {
+                // Pass unencrypted content for notification
+                await sendMessageNotification(
+                  receiver.fcmToken,
+                  newMessage,
+                  sender,
+                  content // Pass unencrypted content
+                );
+                console.log(
+                  `📱 Push notification sent for message to ${actualReceiverId}`
+                );
+              }
+            } else {
+              console.log(
+                `ℹ️ No FCM token found for registered user ${actualReceiverId}`
               );
             }
           }

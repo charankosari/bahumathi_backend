@@ -44,22 +44,73 @@ const processPendingGiftsForUser = async (userId, phoneNumber) => {
       phoneNumber: normalizedNumber,
     }).session(session);
 
-    if (!userWithNoAccount || userWithNoAccount.gifts.length === 0) {
+    if (!userWithNoAccount) {
       console.log(
-        `ℹ️ No pending gifts found for phone number: ${normalizedNumber}`
+        `ℹ️ No UserWithNoAccount found for phone number: ${normalizedNumber}`
       );
       await session.commitTransaction();
       return { giftsProcessed: 0, messagesProcessed: 0 };
     }
 
+    const userWithNoAccountId = userWithNoAccount._id;
     console.log(
-      `📦 Processing ${userWithNoAccount.gifts.length} pending gift(s) for user ${userId}`
+      `📦 Found UserWithNoAccount ${userWithNoAccountId} for phone ${normalizedNumber}, migrating to user ${userId}`
     );
 
+    // Step 1: Update all gifts with UserWithNoAccount._id to use real user._id
+    const giftsToUpdate = await Gift.updateMany(
+      { receiverId: userWithNoAccountId },
+      { $set: { receiverId: userId, receiverNumber: null } },
+      { session }
+    );
+    console.log(
+      `✅ Updated ${giftsToUpdate.modifiedCount} gift(s) with new receiverId`
+    );
+
+    // Step 2: Update all messages with UserWithNoAccount._id to use real user._id
+    const messagesToUpdate = await Message.updateMany(
+      { receiverId: userWithNoAccountId },
+      { $set: { receiverId: userId, receiverNumber: null } },
+      { session }
+    );
+    console.log(
+      `✅ Updated ${messagesToUpdate.modifiedCount} message(s) with new receiverId`
+    );
+
+    // Step 3: Update all conversations - replace UserWithNoAccount._id with real user._id in participants
+    const conversationsToUpdate = await Conversation.find({
+      participants: userWithNoAccountId,
+    }).session(session);
+
+    for (const conversation of conversationsToUpdate) {
+      // Replace UserWithNoAccount._id with real user._id in participants
+      const participantIndex = conversation.participants.findIndex(
+        (p) => p.toString() === userWithNoAccountId.toString()
+      );
+      if (participantIndex !== -1) {
+        conversation.participants[participantIndex] = userId;
+
+        // Update unreadCounts - move from UserWithNoAccount._id to real user._id
+        const unreadCount =
+          conversation.unreadCounts.get(userWithNoAccountId.toString()) || 0;
+        if (unreadCount > 0) {
+          conversation.unreadCounts.set(userId.toString(), unreadCount);
+          conversation.unreadCounts.delete(userWithNoAccountId.toString());
+        }
+
+        await conversation.save({ session });
+        console.log(
+          `✅ Updated conversation ${conversation._id} - replaced UserWithNoAccount._id with user._id`
+        );
+      }
+    }
+
+    // Step 4: Process gifts and messages for notifications
+    // Use the gifts/messages from userWithNoAccount to know which ones to process
     const processedGifts = [];
     const processedMessages = [];
 
-    // Process each gift
+    // Process each gift from UserWithNoAccount
     for (const giftEntry of userWithNoAccount.gifts) {
       try {
         const gift = await Gift.findById(giftEntry.giftId).session(session);
@@ -68,9 +119,10 @@ const processPendingGiftsForUser = async (userId, phoneNumber) => {
           continue;
         }
 
+        // Gift should already have receiverId = userId from Step 1
         const giftSenderId = giftEntry.senderId;
 
-        // Find or create conversation
+        // Find or create conversation (should already exist from Step 3, but check anyway)
         let conversation = await Conversation.findOne({
           participants: { $all: [giftSenderId, userId] },
         }).session(session);
@@ -85,11 +137,11 @@ const processPendingGiftsForUser = async (userId, phoneNumber) => {
           );
         }
 
-        // Update gift with receiverId and conversationId
-        gift.receiverId = userId;
-        gift.receiverNumber = null; // Clear phone number since user is now registered
-        gift.conversationId = conversation._id;
-        await gift.save({ session });
+        // Update gift with conversationId if not already set
+        if (!gift.conversationId) {
+          gift.conversationId = conversation._id;
+          await gift.save({ session });
+        }
 
         // Check if there's a message associated with this gift
         let associatedMessage = null;
@@ -103,42 +155,56 @@ const processPendingGiftsForUser = async (userId, phoneNumber) => {
           const messageEntry = userWithNoAccount.messages.find(
             (m) =>
               m.senderId.toString() === giftSenderId.toString() &&
-              Math.abs(new Date(m.createdAt) - new Date(giftEntry.createdAt)) <
-                5000 // Within 5 seconds
+              m.messageId?.toString() === gift._id.toString()
           );
 
           if (messageEntry && messageEntry.content) {
-            // Create the message
-            [associatedMessage] = await Message.create(
-              [
-                {
-                  conversationId: conversation._id,
-                  senderId: giftSenderId,
-                  receiverId: userId,
-                  type: messageEntry.type || "text",
-                  content:
-                    messageEntry.type === "text" && messageEntry.content
-                      ? encrypt(messageEntry.content)
-                      : messageEntry.content,
-                  giftId: gift._id,
-                },
-              ],
-              { session }
-            );
+            // Message might already exist, check first
+            if (messageEntry.messageId) {
+              associatedMessage = await Message.findById(
+                messageEntry.messageId
+              ).session(session);
+            }
 
-            // Update gift with messageId
-            gift.messageId = associatedMessage._id;
-            await gift.save({ session });
+            if (!associatedMessage && messageEntry.content) {
+              // Create the message
+              [associatedMessage] = await Message.create(
+                [
+                  {
+                    conversationId: conversation._id,
+                    senderId: giftSenderId,
+                    receiverId: userId,
+                    type: messageEntry.type || "text",
+                    content:
+                      messageEntry.type === "text" && messageEntry.content
+                        ? encrypt(messageEntry.content)
+                        : messageEntry.content,
+                    giftId: gift._id,
+                  },
+                ],
+                { session }
+              );
+
+              // Update gift with messageId
+              gift.messageId = associatedMessage._id;
+              await gift.save({ session });
+            }
 
             // Update conversation
-            conversation.lastMessage = {
-              text: "🎁 Gift with message",
-              sender: giftSenderId,
-            };
-            conversation.lastMessageType = "giftWithMessage";
-            const currentUnread = conversation.unreadCounts.get(userId) || 0;
-            conversation.unreadCounts.set(userId, currentUnread + 1);
-            await conversation.save({ session });
+            if (associatedMessage) {
+              conversation.lastMessage = {
+                text: "🎁 Gift with message",
+                sender: giftSenderId,
+              };
+              conversation.lastMessageType = "giftWithMessage";
+              const currentUnread =
+                conversation.unreadCounts.get(userId.toString()) || 0;
+              conversation.unreadCounts.set(
+                userId.toString(),
+                currentUnread + 1
+              );
+              await conversation.save({ session });
+            }
           }
         }
 
@@ -153,10 +219,82 @@ const processPendingGiftsForUser = async (userId, phoneNumber) => {
         );
       } catch (giftError) {
         console.error(
-          `❌ Error processing gift ${giftEntry.giftId}:`,
+          `❌ Error processing gift ${gift._id}:`,
           giftError.message
         );
         // Continue with next gift
+      }
+    }
+
+    // Process messages from UserWithNoAccount that aren't associated with gifts
+    for (const messageEntry of userWithNoAccount.messages) {
+      try {
+        // Skip if message is already associated with a gift (processed above)
+        if (
+          processedGifts.some(
+            (pg) =>
+              pg.message?._id?.toString() === messageEntry.messageId?.toString()
+          )
+        ) {
+          continue;
+        }
+
+        let message = null;
+        if (messageEntry.messageId) {
+          message = await Message.findById(messageEntry.messageId).session(
+            session
+          );
+        }
+
+        const messageSenderId = messageEntry.senderId;
+
+        // Find or create conversation
+        let conversation = await Conversation.findOne({
+          participants: { $all: [messageSenderId, userId] },
+        }).session(session);
+
+        if (!conversation) {
+          [conversation] = await Conversation.create(
+            [{ participants: [messageSenderId, userId] }],
+            { session }
+          );
+        }
+
+        // Create message if it doesn't exist
+        if (!message && messageEntry.content) {
+          [message] = await Message.create(
+            [
+              {
+                conversationId: conversation._id,
+                senderId: messageSenderId,
+                receiverId: userId,
+                type: messageEntry.type || "text",
+                content:
+                  messageEntry.type === "text" && messageEntry.content
+                    ? encrypt(messageEntry.content)
+                    : messageEntry.content,
+              },
+            ],
+            { session }
+          );
+        } else if (message && !message.conversationId) {
+          // Update message with conversationId if not already set
+          message.conversationId = conversation._id;
+          await message.save({ session });
+        }
+
+        if (message) {
+          processedMessages.push({
+            message,
+            senderId: messageSenderId,
+          });
+
+          console.log(
+            `✅ Processed message ${message._id} for user ${userId} from sender ${messageSenderId}`
+          );
+        }
+      } catch (messageError) {
+        console.error(`❌ Error processing message:`, messageError.message);
       }
     }
 
@@ -201,8 +339,12 @@ const processPendingGiftsForUser = async (userId, phoneNumber) => {
     }
 
     // Delete the UserWithNoAccount record after processing
-    await UserWithNoAccount.findByIdAndDelete(userWithNoAccount._id);
-    console.log(`🗑️ Deleted UserWithNoAccount record for ${normalizedNumber}`);
+    await UserWithNoAccount.findByIdAndDelete(userWithNoAccountId).session(
+      session
+    );
+    console.log(
+      `🗑️ Deleted UserWithNoAccount record ${userWithNoAccountId} for ${normalizedNumber}`
+    );
 
     return {
       giftsProcessed: processedGifts.length,
