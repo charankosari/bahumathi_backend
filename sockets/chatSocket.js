@@ -152,10 +152,13 @@ function initChatSocket(io) {
                 `✅ [sendGift] Found existing UserWithNoAccount: ${userWithNoAccount._id} for phone ${actualReceiverNumber}`
               );
             }
-            // Use UserWithNoAccount._id as receiverId - this is always a valid ObjectId
-            actualReceiverId = userWithNoAccount._id;
+            // Use UserWithNoAccount._id as receiverId - ensure it's an ObjectId
+            actualReceiverId =
+              userWithNoAccount._id instanceof mongoose.Types.ObjectId
+                ? userWithNoAccount._id
+                : new mongoose.Types.ObjectId(userWithNoAccount._id);
             console.log(
-              `📋 [sendGift] Using UserWithNoAccount._id as receiverId: ${actualReceiverId}`
+              `📋 [sendGift] Using UserWithNoAccount._id as receiverId: ${actualReceiverId} (type: ${actualReceiverId.constructor.name})`
             );
           }
         }
@@ -469,10 +472,13 @@ function initChatSocket(io) {
                 `✅ [sendMessage] Found existing UserWithNoAccount: ${userWithNoAccount._id} for phone ${actualReceiverNumber}`
               );
             }
-            // Use UserWithNoAccount._id as receiverId - this is always a valid ObjectId
-            actualReceiverId = userWithNoAccount._id;
+            // Use UserWithNoAccount._id as receiverId - ensure it's an ObjectId
+            actualReceiverId =
+              userWithNoAccount._id instanceof mongoose.Types.ObjectId
+                ? userWithNoAccount._id
+                : new mongoose.Types.ObjectId(userWithNoAccount._id);
             console.log(
-              `📋 [sendMessage] Using UserWithNoAccount._id as receiverId: ${actualReceiverId}`
+              `📋 [sendMessage] Using UserWithNoAccount._id as receiverId: ${actualReceiverId} (type: ${actualReceiverId.constructor.name})`
             );
           }
         }
@@ -586,7 +592,34 @@ function initChatSocket(io) {
             giftRecord || giftId ? "giftWithMessage" : type;
           // Update unreadCounts - actualReceiverId is always a valid ObjectId now
           // (either User._id or UserWithNoAccount._id)
-          const receiverIdString = actualReceiverId.toString();
+          // Ensure it's converted to a string for Mongoose Map
+          if (!actualReceiverId) {
+            console.error(
+              `❌ [sendMessage] actualReceiverId is null/undefined when updating unreadCounts!`
+            );
+            throw new Error(
+              "actualReceiverId is required for unreadCounts update"
+            );
+          }
+
+          // Convert to string - handle both ObjectId instances and strings
+          let receiverIdString;
+          if (actualReceiverId instanceof mongoose.Types.ObjectId) {
+            receiverIdString = actualReceiverId.toString();
+          } else if (typeof actualReceiverId === "string") {
+            receiverIdString = actualReceiverId;
+          } else {
+            receiverIdString = String(actualReceiverId);
+          }
+
+          // Double-check it's a valid ObjectId string
+          if (!mongoose.Types.ObjectId.isValid(receiverIdString)) {
+            console.error(
+              `❌ [sendMessage] receiverIdString "${receiverIdString}" is not a valid ObjectId string!`
+            );
+            throw new Error(`Invalid receiverIdString: ${receiverIdString}`);
+          }
+
           const currentUnread =
             conversation.unreadCounts.get(receiverIdString) || 0;
           conversation.unreadCounts.set(receiverIdString, currentUnread + 1);
