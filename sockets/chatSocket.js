@@ -66,10 +66,23 @@ function initChatSocket(io) {
           return null;
         };
 
-        let actualReceiverId = receiverId;
+        let actualReceiverId = null;
         let actualReceiverNumber = receiverNumber
           ? normalizePhoneNumber(receiverNumber)
           : null;
+
+        // Validate receiverId - it must be a valid ObjectId if provided
+        if (receiverId) {
+          if (mongoose.Types.ObjectId.isValid(receiverId)) {
+            actualReceiverId = new mongoose.Types.ObjectId(receiverId);
+          } else {
+            // If receiverId is not a valid ObjectId, treat it as a phone number
+            console.warn(
+              `⚠️ receiverId "${receiverId}" is not a valid ObjectId, treating as phone number`
+            );
+            actualReceiverNumber = normalizePhoneNumber(receiverId);
+          }
+        }
 
         // If receiverNumber is provided, try to find user by phone number
         if (!actualReceiverId && actualReceiverNumber) {
@@ -85,9 +98,12 @@ function initChatSocket(io) {
         let conversation = null;
         // Create conversation even if receiver doesn't exist (for phone number)
         // Ensure senderId is a valid ObjectId
-        const senderObjectId = mongoose.Types.ObjectId.isValid(senderId)
-          ? new mongoose.Types.ObjectId(senderId)
-          : senderId;
+        if (!mongoose.Types.ObjectId.isValid(senderId)) {
+          throw new Error(
+            `Invalid senderId: "${senderId}" is not a valid ObjectId`
+          );
+        }
+        const senderObjectId = new mongoose.Types.ObjectId(senderId);
 
         if (actualReceiverId) {
           // Ensure receiverId is also a valid ObjectId
@@ -274,10 +290,23 @@ function initChatSocket(io) {
           return null;
         };
 
-        let actualReceiverId = receiverId;
+        let actualReceiverId = null;
         let actualReceiverNumber = receiverNumber
           ? normalizePhoneNumber(receiverNumber)
           : null;
+
+        // Validate receiverId - it must be a valid ObjectId if provided
+        if (receiverId) {
+          if (mongoose.Types.ObjectId.isValid(receiverId)) {
+            actualReceiverId = new mongoose.Types.ObjectId(receiverId);
+          } else {
+            // If receiverId is not a valid ObjectId, treat it as a phone number
+            console.warn(
+              `⚠️ receiverId "${receiverId}" is not a valid ObjectId, treating as phone number`
+            );
+            actualReceiverNumber = normalizePhoneNumber(receiverId);
+          }
+        }
 
         // If receiverNumber is provided, try to find user by phone number
         if (!actualReceiverId && actualReceiverNumber) {
@@ -293,9 +322,12 @@ function initChatSocket(io) {
         let conversation = null;
         // Create conversation even if receiver doesn't exist (for phone number)
         // Ensure senderId is a valid ObjectId
-        const senderObjectId = mongoose.Types.ObjectId.isValid(senderId)
-          ? new mongoose.Types.ObjectId(senderId)
-          : senderId;
+        if (!mongoose.Types.ObjectId.isValid(senderId)) {
+          throw new Error(
+            `Invalid senderId: "${senderId}" is not a valid ObjectId`
+          );
+        }
+        const senderObjectId = new mongoose.Types.ObjectId(senderId);
 
         if (actualReceiverId) {
           // Ensure receiverId is also a valid ObjectId
