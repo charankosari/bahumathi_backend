@@ -43,9 +43,14 @@ function initChatSocket(io) {
       const session = await mongoose.startSession();
       session.startTransaction();
 
+      // Declare variables outside try block for error handling
+      let senderId;
+      let receiverId;
+      let receiverNumber;
+      let giftData;
       try {
-        const senderId = socket.user.id;
-        const { receiverId, receiverNumber, giftData } = data;
+        senderId = socket.user.id;
+        ({ receiverId, receiverNumber, giftData } = data);
 
         console.log("🎁 [sendGift] Received data:", {
           senderId,
@@ -375,17 +380,14 @@ function initChatSocket(io) {
       const session = await mongoose.startSession();
       session.startTransaction();
 
+      // Declare variables outside try block for error handling
+      let senderId;
+      let receiverId;
+      let receiverNumber;
       try {
-        const senderId = socket.user.id;
-        const {
-          receiverId,
-          receiverNumber,
-          type,
-          content,
-          mediaUrl,
-          giftId,
-          gift,
-        } = data;
+        senderId = socket.user.id;
+        ({ receiverId, receiverNumber, type, content, mediaUrl, giftId, gift } =
+          data);
 
         console.log("💬 [sendMessage] Received data:", {
           senderId,
@@ -568,9 +570,13 @@ function initChatSocket(io) {
           };
           conversation.lastMessageType =
             giftRecord || giftId ? "giftWithMessage" : type;
-          const currentUnread =
-            conversation.unreadCounts.get(actualReceiverId) || 0;
-          conversation.unreadCounts.set(actualReceiverId, currentUnread + 1);
+          // Convert actualReceiverId to string for Mongoose Map (only if it exists)
+          if (actualReceiverId) {
+            const receiverIdString = actualReceiverId.toString();
+            const currentUnread =
+              conversation.unreadCounts.get(receiverIdString) || 0;
+            conversation.unreadCounts.set(receiverIdString, currentUnread + 1);
+          }
 
           await conversation.save({ session }); // Pass session
         }
