@@ -4,6 +4,7 @@ const Message = require("../models/Message");
 const Gift = require("../models/Gift");
 const Conversation = require("../models/Conversation");
 const User = require("../models/user.model");
+const UserWithNoAccount = require("../models/UserWithNoAccount");
 const {
   sendMessageNotification,
   sendGiftNotification,
@@ -44,22 +45,78 @@ function initChatSocket(io) {
 
       try {
         const senderId = socket.user.id;
-        const { receiverId, giftData } = data;
+        const { receiverId, receiverNumber, giftData } = data;
 
         if (!giftData) {
           throw new Error("Gift data is required");
         }
 
-        // --- CONVERSATION LOGIC ---
-        let conversation = await Conversation.findOne({
-          participants: { $all: [senderId, receiverId] },
-        }).session(session);
+        if (!receiverId && !receiverNumber) {
+          throw new Error("Either receiverId or receiverNumber is required");
+        }
 
-        if (!conversation) {
-          [conversation] = await Conversation.create(
-            [{ participants: [senderId, receiverId] }],
-            { session }
-          );
+        // Normalize phone number if provided
+        const normalizePhoneNumber = (rawNumber) => {
+          if (!rawNumber) return null;
+          const str = String(rawNumber);
+          const digits = str.replace(/\D/g, "");
+          if (digits.length >= 10) {
+            return digits.slice(-10);
+          }
+          return null;
+        };
+
+        let actualReceiverId = receiverId;
+        let actualReceiverNumber = receiverNumber
+          ? normalizePhoneNumber(receiverNumber)
+          : null;
+
+        // If receiverNumber is provided, try to find user by phone number
+        if (!actualReceiverId && actualReceiverNumber) {
+          const userByNumber = await User.findOne({
+            number: actualReceiverNumber,
+            active: true,
+          }).session(session);
+          if (userByNumber) {
+            actualReceiverId = userByNumber._id;
+          }
+        }
+
+        let conversation = null;
+        // Create conversation even if receiver doesn't exist (for phone number)
+        if (actualReceiverId) {
+          conversation = await Conversation.findOne({
+            participants: { $all: [senderId, actualReceiverId] },
+          }).session(session);
+
+          if (!conversation) {
+            [conversation] = await Conversation.create(
+              [{ participants: [senderId, actualReceiverId] }],
+              { session }
+            );
+          }
+        } else if (actualReceiverNumber) {
+          // Create conversation with phone number for non-registered user
+          conversation = await Conversation.findOne({
+            senderId: senderId,
+            receiverNumber: actualReceiverNumber,
+          }).session(session);
+
+          if (!conversation) {
+            [conversation] = await Conversation.create(
+              [
+                {
+                  participants: [senderId],
+                  senderId: senderId,
+                  receiverNumber: actualReceiverNumber,
+                },
+              ],
+              { session }
+            );
+            console.log(
+              `✅ Created conversation with phone number ${actualReceiverNumber} for sender ${senderId}`
+            );
+          }
         }
 
         // --- GIFT CREATION ---
@@ -67,7 +124,8 @@ function initChatSocket(io) {
           [
             {
               senderId,
-              receiverId,
+              receiverId: actualReceiverId || null,
+              receiverNumber: actualReceiverNumber || null,
               type: giftData.type || "gold",
               name: giftData.name || "Gift",
               icon: giftData.icon || null,
@@ -78,7 +136,7 @@ function initChatSocket(io) {
               orderId: giftData.orderId || null,
               status: "pending",
               note: giftData.note || null,
-              conversationId: conversation._id,
+              conversationId: conversation?._id || null,
             },
           ],
           { session }
@@ -91,14 +149,57 @@ function initChatSocket(io) {
         // Always send push notification (even if user is online)
         // This ensures users get notified even if they're not on the chat screen
         try {
-          const [receiver, sender] = await Promise.all([
-            User.findById(receiverId).select("fcmToken"),
-            User.findById(senderId).select("fullName image"),
-          ]);
+          const sender = await User.findById(senderId).select("fullName image");
+          let receiver = null;
+
+          if (actualReceiverId) {
+            receiver = await User.findById(actualReceiverId).select(
+              "fcmToken fullName image"
+            );
+          } else if (actualReceiverNumber) {
+            // Try to find user by phone number (even if inactive, they might have FCM token)
+            receiver = await User.findOne({
+              number: actualReceiverNumber,
+            }).select("fcmToken fullName image");
+          }
 
           if (receiver?.fcmToken) {
             await sendGiftNotification(receiver.fcmToken, giftRecord, sender);
-            console.log(`📱 Push notification sent for gift to ${receiverId}`);
+            console.log(
+              `📱 Push notification sent for gift to ${
+                actualReceiverId || actualReceiverNumber
+              }`
+            );
+          } else if (actualReceiverNumber) {
+            console.log(
+              `ℹ️ Gift created for phone number ${actualReceiverNumber}, but no FCM token found. Saving to UserWithNoAccount.`
+            );
+            // Save gift to UserWithNoAccount for when user registers
+            try {
+              let userWithNoAccount = await UserWithNoAccount.findOne({
+                phoneNumber: actualReceiverNumber,
+              });
+              if (!userWithNoAccount) {
+                userWithNoAccount = await UserWithNoAccount.create({
+                  phoneNumber: actualReceiverNumber,
+                  gifts: [],
+                });
+              }
+              userWithNoAccount.gifts.push({
+                giftId: giftRecord._id,
+                senderId: senderId,
+                createdAt: new Date(),
+              });
+              await userWithNoAccount.save();
+              console.log(
+                `✅ Gift saved to UserWithNoAccount for ${actualReceiverNumber}`
+              );
+            } catch (saveError) {
+              console.error(
+                "Error saving gift to UserWithNoAccount:",
+                saveError.message
+              );
+            }
           }
         } catch (notifError) {
           console.error(
@@ -136,19 +237,83 @@ function initChatSocket(io) {
 
       try {
         const senderId = socket.user.id;
-        const { receiverId, type, content, mediaUrl, giftId, gift } = data;
+        const {
+          receiverId,
+          receiverNumber,
+          type,
+          content,
+          mediaUrl,
+          giftId,
+          gift,
+        } = data;
 
-        // --- CONVERSATION LOGIC ---
-        let conversation = await Conversation.findOne({
-          participants: { $all: [senderId, receiverId] },
-        }).session(session); // Pass session
+        if (!receiverId && !receiverNumber) {
+          throw new Error("Either receiverId or receiverNumber is required");
+        }
 
-        if (!conversation) {
-          // .create() in a session expects an array
-          [conversation] = await Conversation.create(
-            [{ participants: [senderId, receiverId] }],
-            { session } // Pass session
-          );
+        // Normalize phone number if provided
+        const normalizePhoneNumber = (rawNumber) => {
+          if (!rawNumber) return null;
+          const str = String(rawNumber);
+          const digits = str.replace(/\D/g, "");
+          if (digits.length >= 10) {
+            return digits.slice(-10);
+          }
+          return null;
+        };
+
+        let actualReceiverId = receiverId;
+        let actualReceiverNumber = receiverNumber
+          ? normalizePhoneNumber(receiverNumber)
+          : null;
+
+        // If receiverNumber is provided, try to find user by phone number
+        if (!actualReceiverId && actualReceiverNumber) {
+          const userByNumber = await User.findOne({
+            number: actualReceiverNumber,
+            active: true,
+          }).session(session);
+          if (userByNumber) {
+            actualReceiverId = userByNumber._id;
+          }
+        }
+
+        let conversation = null;
+        // Create conversation even if receiver doesn't exist (for phone number)
+        if (actualReceiverId) {
+          conversation = await Conversation.findOne({
+            participants: { $all: [senderId, actualReceiverId] },
+          }).session(session); // Pass session
+
+          if (!conversation) {
+            // .create() in a session expects an array
+            [conversation] = await Conversation.create(
+              [{ participants: [senderId, actualReceiverId] }],
+              { session } // Pass session
+            );
+          }
+        } else if (actualReceiverNumber) {
+          // Create conversation with phone number for non-registered user
+          conversation = await Conversation.findOne({
+            senderId: senderId,
+            receiverNumber: actualReceiverNumber,
+          }).session(session);
+
+          if (!conversation) {
+            [conversation] = await Conversation.create(
+              [
+                {
+                  participants: [senderId],
+                  senderId: senderId,
+                  receiverNumber: actualReceiverNumber,
+                },
+              ],
+              { session }
+            );
+            console.log(
+              `✅ Created conversation with phone number ${actualReceiverNumber} for sender ${senderId}`
+            );
+          }
         }
 
         // --- HANDLE GIFT CREATION IF GIFT DATA PROVIDED (Single Call) ---
@@ -159,7 +324,8 @@ function initChatSocket(io) {
             [
               {
                 senderId,
-                receiverId,
+                receiverId: actualReceiverId || null,
+                receiverNumber: actualReceiverNumber || null,
                 type: gift.type || "gold",
                 name: gift.name || "Gift",
                 icon: gift.icon || null,
@@ -170,7 +336,7 @@ function initChatSocket(io) {
                 orderId: gift.orderId || null,
                 status: "pending",
                 note: gift.note || null,
-                conversationId: conversation._id,
+                conversationId: conversation?._id || null,
                 isSelfGift: gift.isSelfGift || false,
               },
             ],
@@ -181,7 +347,10 @@ function initChatSocket(io) {
           giftRecord = await Gift.findOne({
             _id: giftId,
             senderId: senderId, // Ensure sender owns this gift
-            receiverId: receiverId,
+            $or: [
+              { receiverId: actualReceiverId },
+              { receiverNumber: actualReceiverNumber },
+            ],
           }).session(session); // Pass session
 
           if (!giftRecord) {
@@ -190,37 +359,44 @@ function initChatSocket(io) {
           }
         }
 
-        // --- PREPARE CONVERSATION UPDATE ---
-        conversation.lastMessage = {
-          text:
-            giftRecord || giftId ? "🎁 Gift with message" : encrypt(content),
-          sender: senderId,
-        };
-        conversation.lastMessageType =
-          giftRecord || giftId ? "giftWithMessage" : type;
-        const currentUnread = conversation.unreadCounts.get(receiverId) || 0;
-        conversation.unreadCounts.set(receiverId, currentUnread + 1);
+        // --- PREPARE CONVERSATION UPDATE (only if conversation exists) ---
+        if (conversation) {
+          conversation.lastMessage = {
+            text:
+              giftRecord || giftId ? "🎁 Gift with message" : encrypt(content),
+            sender: senderId,
+          };
+          conversation.lastMessageType =
+            giftRecord || giftId ? "giftWithMessage" : type;
+          const currentUnread =
+            conversation.unreadCounts.get(actualReceiverId) || 0;
+          conversation.unreadCounts.set(actualReceiverId, currentUnread + 1);
 
-        await conversation.save({ session }); // Pass session
+          await conversation.save({ session }); // Pass session
+        }
 
-        // --- MESSAGE CREATION ---
-        const [newMessage] = await Message.create(
-          [
-            {
-              conversationId: conversation._id,
-              senderId,
-              receiverId,
-              type: giftRecord || giftId ? "giftWithMessage" : type,
-              content: type === "text" && content ? encrypt(content) : content,
-              mediaUrl,
-              giftId: giftRecord ? giftRecord._id : giftId || undefined,
-            },
-          ],
-          { session } // Pass session
-        );
+        // --- MESSAGE CREATION (only if conversation exists) ---
+        let newMessage = null;
+        if (conversation) {
+          [newMessage] = await Message.create(
+            [
+              {
+                conversationId: conversation._id,
+                senderId,
+                receiverId: actualReceiverId,
+                type: giftRecord || giftId ? "giftWithMessage" : type,
+                content:
+                  type === "text" && content ? encrypt(content) : content,
+                mediaUrl,
+                giftId: giftRecord ? giftRecord._id : giftId || undefined,
+              },
+            ],
+            { session } // Pass session
+          );
+        }
 
-        // --- UPDATE GIFT WITH MESSAGE ID ---
-        if (giftRecord) {
+        // --- UPDATE GIFT WITH MESSAGE ID (if message was created) ---
+        if (giftRecord && newMessage) {
           // We use the same giftRecord variable, findByIdAndUpdate returns the new doc
           giftRecord = await Gift.findByIdAndUpdate(
             giftRecord._id,
@@ -232,77 +408,73 @@ function initChatSocket(io) {
         // *** COMMIT THE TRANSACTION ***
         await session.commitTransaction();
 
-        // --- EMIT SOCKET EVENTS (Only if transaction was successful) ---
+        // --- EMIT SOCKET EVENTS (Only if transaction was successful and conversation exists) ---
+        if (conversation && newMessage) {
+          const unencryptedMessageForSocket = {
+            ...newMessage.toObject(),
+            content: content, // Send unencrypted content back to clients
+            gift: giftRecord ? giftRecord.toObject() : undefined,
+          };
 
-        const unencryptedMessageForSocket = {
-          ...newMessage.toObject(),
-          content: content, // Send unencrypted content back to clients
-          gift: giftRecord ? giftRecord.toObject() : undefined,
-        };
+          if (giftRecord) {
+            // Combined gift+message events
+            io.to(actualReceiverId).emit("receiveGiftWithMessage", {
+              message: unencryptedMessageForSocket,
+              gift: giftRecord,
+              conversation,
+            });
+            socket.emit("giftWithMessageSent", {
+              message: unencryptedMessageForSocket,
+              gift: giftRecord,
+              conversation,
+            });
+          } else {
+            // Regular message events
+            io.to(actualReceiverId).emit("receiveMessage", {
+              message: unencryptedMessageForSocket,
+              conversation,
+            });
+            socket.emit("receiveMessage", {
+              message: unencryptedMessageForSocket,
+              conversation,
+            });
+          }
+        }
 
-        if (giftRecord) {
-          // Combined gift+message events
-          io.to(receiverId).emit("receiveGiftWithMessage", {
-            message: unencryptedMessageForSocket,
-            gift: giftRecord,
-            conversation,
-          });
-          socket.emit("giftWithMessageSent", {
-            message: unencryptedMessageForSocket,
-            gift: giftRecord,
-            conversation,
-          });
+        // --- SEND PUSH NOTIFICATIONS ---
+        // Always send push notification (even if user is online or not registered)
+        // This ensures users get notified even if they're not on the chat screen
+        try {
+          const sender = await User.findById(senderId).select("fullName image");
+          let receiver = null;
 
-          // Send push notification for gift with message
-          // Always send push notification (even if user is online)
-          // This ensures users get notified even if they're not on the chat screen
-          try {
-            const [receiver, sender] = await Promise.all([
-              User.findById(receiverId).select("fcmToken"),
-              User.findById(senderId).select("fullName image"),
-            ]);
+          if (actualReceiverId) {
+            receiver = await User.findById(actualReceiverId).select(
+              "fcmToken fullName image"
+            );
+          } else if (actualReceiverNumber) {
+            // Try to find user by phone number (even if inactive, they might have FCM token)
+            receiver = await User.findOne({
+              number: actualReceiverNumber,
+            }).select("fcmToken fullName image");
+          }
 
-            if (receiver?.fcmToken) {
+          if (receiver?.fcmToken) {
+            if (giftRecord) {
               // Pass unencrypted content for notification
               await sendGiftWithMessageNotification(
                 receiver.fcmToken,
                 giftRecord,
-                newMessage,
+                newMessage || giftRecord, // Use giftRecord if no message
                 sender,
                 content // Pass unencrypted content
               );
               console.log(
-                `📱 Push notification sent for gift with message to ${receiverId}`
+                `📱 Push notification sent for gift with message to ${
+                  actualReceiverId || actualReceiverNumber
+                }`
               );
-            }
-          } catch (notifError) {
-            console.error(
-              "Error sending push notification for gift with message:",
-              notifError.message
-            );
-            // Don't fail the message send if notification fails
-          }
-        } else {
-          // Regular message events
-          io.to(receiverId).emit("receiveMessage", {
-            message: unencryptedMessageForSocket,
-            conversation,
-          });
-          socket.emit("receiveMessage", {
-            message: unencryptedMessageForSocket,
-            conversation,
-          });
-
-          // Send push notification for regular message
-          // Always send push notification (even if user is online)
-          // This ensures users get notified even if they're not on the chat screen
-          try {
-            const [receiver, sender] = await Promise.all([
-              User.findById(receiverId).select("fcmToken"),
-              User.findById(senderId).select("fullName image"),
-            ]);
-
-            if (receiver?.fcmToken) {
+            } else if (newMessage) {
               // Pass unencrypted content for notification
               await sendMessageNotification(
                 receiver.fcmToken,
@@ -311,20 +483,74 @@ function initChatSocket(io) {
                 content // Pass unencrypted content
               );
               console.log(
-                `📱 Push notification sent for message to ${receiverId}`
+                `📱 Push notification sent for message to ${
+                  actualReceiverId || actualReceiverNumber
+                }`
               );
             }
-          } catch (notifError) {
-            console.error(
-              "Error sending push notification for message:",
-              notifError.message
+          } else if (actualReceiverNumber && giftRecord) {
+            // Gift created for non-registered user
+            console.log(
+              `ℹ️ Gift with message created for phone number ${actualReceiverNumber}, but no FCM token found. Saving to UserWithNoAccount.`
             );
-            // Don't fail the message send if notification fails
+            // Save gift and message to UserWithNoAccount for when user registers
+            try {
+              let userWithNoAccount = await UserWithNoAccount.findOne({
+                phoneNumber: actualReceiverNumber,
+              });
+              if (!userWithNoAccount) {
+                userWithNoAccount = await UserWithNoAccount.create({
+                  phoneNumber: actualReceiverNumber,
+                  gifts: [],
+                  messages: [],
+                });
+              }
+              userWithNoAccount.gifts.push({
+                giftId: giftRecord._id,
+                senderId: senderId,
+                createdAt: new Date(),
+              });
+              if (newMessage) {
+                userWithNoAccount.messages.push({
+                  messageId: newMessage._id,
+                  senderId: senderId,
+                  content: content,
+                  type: type,
+                  createdAt: new Date(),
+                });
+              } else if (content) {
+                // If message wasn't created (no conversation), save it anyway
+                userWithNoAccount.messages.push({
+                  senderId: senderId,
+                  content: content,
+                  type: type,
+                  createdAt: new Date(),
+                });
+              }
+              await userWithNoAccount.save();
+              console.log(
+                `✅ Gift with message saved to UserWithNoAccount for ${actualReceiverNumber}`
+              );
+            } catch (saveError) {
+              console.error(
+                "Error saving gift/message to UserWithNoAccount:",
+                saveError.message
+              );
+            }
           }
+        } catch (notifError) {
+          console.error("Error sending push notification:", notifError.message);
+          // Don't fail the message send if notification fails
         }
 
-        if (callback)
-          callback({ success: true, message: unencryptedMessageForSocket });
+        if (callback) {
+          callback({
+            success: true,
+            gift: giftRecord || null,
+            message: newMessage || null,
+            conversation: conversation || null,
+          });
+        }
       } catch (err) {
         // *** ABORT THE TRANSACTION ***
         await session.abortTransaction();

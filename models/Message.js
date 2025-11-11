@@ -8,6 +8,7 @@ const messageSchema = new mongoose.Schema(
     },
     senderId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     receiverId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    receiverNumber: { type: String, required: false }, // For messages to non-registered users
     type: {
       type: String,
       enum: ["text", "image", "voice", "video", "gift", "giftWithMessage"],

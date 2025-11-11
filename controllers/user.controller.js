@@ -22,6 +22,10 @@ const hashOtp = async (otp) => {
 };
 
 // Ensure QR exists for a user (custom scheme id-based URL) and upload to S3 once
+const {
+  processPendingGiftsForUser,
+} = require("../services/pendingGifts.service");
+
 const ensureUserQr = async (user) => {
   if (!user || user.qrCodeUrl) return user;
   const url = `bahumati://user?id=${user._id}`;
@@ -190,6 +194,22 @@ exports.verifyOtp = asyncHandler(async (req, res, next) => {
     await ensureUserQr(user);
   } catch (e) {
     console.error("QR gen failed (verifyOtp):", e.message);
+  }
+
+  // Process pending gifts for this user (if any)
+  if (user.number) {
+    try {
+      const result = await processPendingGiftsForUser(user._id, user.number);
+      console.log(
+        `✅ Processed ${result.giftsProcessed} pending gift(s) for user ${user._id}`
+      );
+    } catch (pendingGiftsError) {
+      console.error(
+        "Error processing pending gifts:",
+        pendingGiftsError.message
+      );
+      // Don't fail the login if pending gifts processing fails
+    }
   }
 
   sendJwtToken(user, 200, "Login successful", res);
@@ -413,6 +433,22 @@ exports.verifyMobileOtpForGoogleAuth = asyncHandler(async (req, res, next) => {
   user.otp = undefined;
   user.otpExpires = undefined;
   await user.save({ validateBeforeSave: false });
+
+  // Process pending gifts for this user (if any)
+  if (user.number) {
+    try {
+      const result = await processPendingGiftsForUser(user._id, user.number);
+      console.log(
+        `✅ Processed ${result.giftsProcessed} pending gift(s) for user ${user._id}`
+      );
+    } catch (pendingGiftsError) {
+      console.error(
+        "Error processing pending gifts:",
+        pendingGiftsError.message
+      );
+      // Don't fail the registration if pending gifts processing fails
+    }
+  }
 
   sendJwtToken(
     user,

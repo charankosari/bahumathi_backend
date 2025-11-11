@@ -3,6 +3,17 @@ const mongoose = require("mongoose");
 const conversationSchema = new mongoose.Schema(
   {
     participants: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+    // For conversations with non-registered users
+    receiverNumber: {
+      type: String,
+      required: false,
+      index: true,
+    },
+    senderId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: false,
+    },
 
     // CHANGE THIS SECTION
     lastMessage: {

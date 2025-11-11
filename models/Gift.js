@@ -10,7 +10,11 @@ const giftSchema = new mongoose.Schema(
     receiverId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
+      required: false, // Made optional to support sending to non-registered users
+    },
+    receiverNumber: {
+      type: String,
+      required: false, // Phone number when receiver doesn't have an account
     },
     isSelfGift: { type: Boolean, default: false },
 

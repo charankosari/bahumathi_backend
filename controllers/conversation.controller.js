@@ -21,8 +21,15 @@ async function fetchPresignedUrlForKey(key) {
 
 exports.getConversations = async (req, res, next) => {
   try {
-    const conversations = await Conversation.find({ participants: req.user.id })
-      .populate("participants", "name profilePic")
+    // Get conversations where user is a participant OR sender with phone number
+    const conversations = await Conversation.find({
+      $or: [
+        { participants: req.user.id },
+        { senderId: req.user.id, receiverNumber: { $exists: true } },
+      ],
+    })
+      .populate("participants", "fullName image number")
+      .populate("senderId", "fullName image number")
       .sort({ updatedAt: -1 });
 
     // Decrypt + add presigned media if needed
