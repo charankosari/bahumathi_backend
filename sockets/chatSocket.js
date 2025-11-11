@@ -84,21 +84,33 @@ function initChatSocket(io) {
 
         let conversation = null;
         // Create conversation even if receiver doesn't exist (for phone number)
+        // Ensure senderId is a valid ObjectId
+        const senderObjectId = mongoose.Types.ObjectId.isValid(senderId)
+          ? new mongoose.Types.ObjectId(senderId)
+          : senderId;
+
         if (actualReceiverId) {
+          // Ensure receiverId is also a valid ObjectId
+          const receiverObjectId = mongoose.Types.ObjectId.isValid(
+            actualReceiverId
+          )
+            ? new mongoose.Types.ObjectId(actualReceiverId)
+            : actualReceiverId;
+
           conversation = await Conversation.findOne({
-            participants: { $all: [senderId, actualReceiverId] },
+            participants: { $all: [senderObjectId, receiverObjectId] },
           }).session(session);
 
           if (!conversation) {
             [conversation] = await Conversation.create(
-              [{ participants: [senderId, actualReceiverId] }],
+              [{ participants: [senderObjectId, receiverObjectId] }],
               { session }
             );
           }
         } else if (actualReceiverNumber) {
           // Create conversation with phone number for non-registered user
           conversation = await Conversation.findOne({
-            senderId: senderId,
+            senderId: senderObjectId,
             receiverNumber: actualReceiverNumber,
           }).session(session);
 
@@ -106,15 +118,15 @@ function initChatSocket(io) {
             [conversation] = await Conversation.create(
               [
                 {
-                  participants: [senderId],
-                  senderId: senderId,
+                  participants: [senderObjectId], // Use ObjectId, not raw senderId
+                  senderId: senderObjectId,
                   receiverNumber: actualReceiverNumber,
                 },
               ],
               { session }
             );
             console.log(
-              `✅ Created conversation with phone number ${actualReceiverNumber} for sender ${senderId}`
+              `✅ Created conversation with phone number ${actualReceiverNumber} for sender ${senderObjectId}`
             );
           }
         }
@@ -280,22 +292,34 @@ function initChatSocket(io) {
 
         let conversation = null;
         // Create conversation even if receiver doesn't exist (for phone number)
+        // Ensure senderId is a valid ObjectId
+        const senderObjectId = mongoose.Types.ObjectId.isValid(senderId)
+          ? new mongoose.Types.ObjectId(senderId)
+          : senderId;
+
         if (actualReceiverId) {
+          // Ensure receiverId is also a valid ObjectId
+          const receiverObjectId = mongoose.Types.ObjectId.isValid(
+            actualReceiverId
+          )
+            ? new mongoose.Types.ObjectId(actualReceiverId)
+            : actualReceiverId;
+
           conversation = await Conversation.findOne({
-            participants: { $all: [senderId, actualReceiverId] },
+            participants: { $all: [senderObjectId, receiverObjectId] },
           }).session(session); // Pass session
 
           if (!conversation) {
             // .create() in a session expects an array
             [conversation] = await Conversation.create(
-              [{ participants: [senderId, actualReceiverId] }],
+              [{ participants: [senderObjectId, receiverObjectId] }],
               { session } // Pass session
             );
           }
         } else if (actualReceiverNumber) {
           // Create conversation with phone number for non-registered user
           conversation = await Conversation.findOne({
-            senderId: senderId,
+            senderId: senderObjectId,
             receiverNumber: actualReceiverNumber,
           }).session(session);
 
@@ -303,15 +327,15 @@ function initChatSocket(io) {
             [conversation] = await Conversation.create(
               [
                 {
-                  participants: [senderId],
-                  senderId: senderId,
+                  participants: [senderObjectId], // Use ObjectId, not raw senderId
+                  senderId: senderObjectId,
                   receiverNumber: actualReceiverNumber,
                 },
               ],
               { session }
             );
             console.log(
-              `✅ Created conversation with phone number ${actualReceiverNumber} for sender ${senderId}`
+              `✅ Created conversation with phone number ${actualReceiverNumber} for sender ${senderObjectId}`
             );
           }
         }
