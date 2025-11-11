@@ -671,6 +671,8 @@ function initChatSocket(io) {
             ...newMessage.toObject(),
             content: content, // Send unencrypted content back to clients
             gift: giftRecord ? giftRecord.toObject() : undefined,
+            // Include receiverNumber if it's a UserWithNoAccount (for frontend matching)
+            receiverNumber: actualReceiverNumber || undefined,
           };
 
           if (giftRecord) {
