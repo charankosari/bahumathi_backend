@@ -155,14 +155,26 @@ function initChatSocket(io) {
           console.log(
             `🔍 [sendGift] Processing with actualReceiverId: ${actualReceiverId} (type: ${actualReceiverId.constructor.name})`
           );
-          const receiverObjectId = mongoose.Types.ObjectId.isValid(
+
+          // Double-check that actualReceiverId is actually an ObjectId
+          if (!mongoose.Types.ObjectId.isValid(actualReceiverId)) {
+            console.error(
+              `❌ [sendGift] actualReceiverId "${actualReceiverId}" is not a valid ObjectId! This should not happen.`
+            );
+            throw new Error(
+              `Invalid actualReceiverId: "${actualReceiverId}" is not a valid ObjectId`
+            );
+          }
+
+          const receiverObjectId = new mongoose.Types.ObjectId(
             actualReceiverId
-          )
-            ? new mongoose.Types.ObjectId(actualReceiverId)
-            : actualReceiverId;
+          );
 
           console.log(
             `📋 [sendGift] Creating conversation with participants: [${senderObjectId}, ${receiverObjectId}]`
+          );
+          console.log(
+            `🔍 [sendGift] Participants types: sender=${senderObjectId.constructor.name}, receiver=${receiverObjectId.constructor.name}`
           );
           conversation = await Conversation.findOne({
             participants: { $all: [senderObjectId, receiverObjectId] },
@@ -442,21 +454,42 @@ function initChatSocket(io) {
 
         if (actualReceiverId) {
           // Ensure receiverId is also a valid ObjectId
-          const receiverObjectId = mongoose.Types.ObjectId.isValid(
-            actualReceiverId
-          )
-            ? new mongoose.Types.ObjectId(actualReceiverId)
-            : actualReceiverId;
+          console.log(
+            `🔍 [sendMessage] Processing with actualReceiverId: ${actualReceiverId} (type: ${actualReceiverId.constructor.name})`
+          );
 
+          // Double-check that actualReceiverId is actually an ObjectId
+          if (!mongoose.Types.ObjectId.isValid(actualReceiverId)) {
+            console.error(
+              `❌ [sendMessage] actualReceiverId "${actualReceiverId}" is not a valid ObjectId! This should not happen.`
+            );
+            throw new Error(
+              `Invalid actualReceiverId: "${actualReceiverId}" is not a valid ObjectId`
+            );
+          }
+
+          const receiverObjectId = new mongoose.Types.ObjectId(
+            actualReceiverId
+          );
+
+          console.log(
+            `📋 [sendMessage] Creating conversation with participants: [${senderObjectId}, ${receiverObjectId}]`
+          );
           conversation = await Conversation.findOne({
             participants: { $all: [senderObjectId, receiverObjectId] },
           }).session(session); // Pass session
 
           if (!conversation) {
             // .create() in a session expects an array
+            console.log(
+              `🆕 [sendMessage] Creating new conversation with participants: [${senderObjectId}, ${receiverObjectId}]`
+            );
             [conversation] = await Conversation.create(
               [{ participants: [senderObjectId, receiverObjectId] }],
               { session } // Pass session
+            );
+            console.log(
+              `✅ [sendMessage] Conversation created: ${conversation._id}`
             );
           }
         } else if (actualReceiverNumber) {
