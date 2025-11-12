@@ -1,4 +1,5 @@
 const admin = require("firebase-admin");
+const Notification = require("../models/Notification");
 
 // Initialize Firebase Admin SDK
 // Make sure to set FIREBASE_SERVICE_ACCOUNT_KEY in your .env file
@@ -254,7 +255,7 @@ const sendMessageNotification = async (
     notificationBody = "Sent you a message";
   }
 
-  return await sendPushNotification(
+  const notificationResult = await sendPushNotification(
     fcmToken,
     {
       title: senderName,
@@ -270,6 +271,30 @@ const sendMessageNotification = async (
       messageType: messageType,
     }
   );
+
+  // Save notification to database
+  if (messageData?.receiverId && notificationResult.success) {
+    try {
+      await Notification.create({
+        userId: messageData.receiverId,
+        type: "message",
+        title: senderName,
+        description: notificationBody,
+        senderId: senderData?._id,
+        senderName: senderName,
+        senderImage: senderData?.image,
+        messageId: messageData._id,
+        conversationId: messageData.conversationId,
+        isSeen: false,
+        isOpened: false,
+      });
+      console.log("✅ Notification saved to database for message");
+    } catch (error) {
+      console.error("❌ Error saving notification to database:", error.message);
+    }
+  }
+
+  return notificationResult;
 };
 
 /**
@@ -289,7 +314,7 @@ const sendGiftNotification = async (fcmToken, giftData, senderData) => {
   // Shortened notification: "A gift sent by [username] in gold/stocks worth ₹2500"
   const notificationBody = `A gift sent by ${senderName} in ${giftTypeName} worth ₹${amount.toLocaleString()}`;
 
-  return await sendPushNotification(
+  const notificationResult = await sendPushNotification(
     fcmToken,
     {
       title: "🎁 New Gift Received!",
@@ -306,6 +331,30 @@ const sendGiftNotification = async (fcmToken, giftData, senderData) => {
       amount: amount.toString(),
     }
   );
+
+  // Save notification to database
+  if (giftData?.receiverId && notificationResult.success) {
+    try {
+      await Notification.create({
+        userId: giftData.receiverId,
+        type: "gift",
+        title: "🎁 New Gift Received!",
+        description: notificationBody,
+        senderId: senderData?._id,
+        senderName: senderName,
+        senderImage: senderData?.image,
+        giftId: giftData._id,
+        conversationId: giftData.conversationId,
+        isSeen: false,
+        isOpened: false,
+      });
+      console.log("✅ Notification saved to database for gift");
+    } catch (error) {
+      console.error("❌ Error saving notification to database:", error.message);
+    }
+  }
+
+  return notificationResult;
 };
 
 /**
@@ -332,7 +381,7 @@ const sendGiftWithMessageNotification = async (
   // Shortened notification: "A gift sent by [username] in gold/stocks worth ₹2500"
   const notificationBody = `A gift sent by ${senderName} in ${giftTypeName} worth ₹${amount.toLocaleString()}`;
 
-  return await sendPushNotification(
+  const notificationResult = await sendPushNotification(
     fcmToken,
     {
       title: "🎁 Gift with Message!",
@@ -350,6 +399,31 @@ const sendGiftWithMessageNotification = async (
       amount: amount.toString(),
     }
   );
+
+  // Save notification to database
+  if (giftData?.receiverId && notificationResult.success) {
+    try {
+      await Notification.create({
+        userId: giftData.receiverId,
+        type: "giftWithMessage",
+        title: "🎁 Gift with Message!",
+        description: notificationBody,
+        senderId: senderData?._id,
+        senderName: senderName,
+        senderImage: senderData?.image,
+        giftId: giftData._id,
+        messageId: messageData?._id,
+        conversationId: giftData.conversationId,
+        isSeen: false,
+        isOpened: false,
+      });
+      console.log("✅ Notification saved to database for gift with message");
+    } catch (error) {
+      console.error("❌ Error saving notification to database:", error.message);
+    }
+  }
+
+  return notificationResult;
 };
 
 module.exports = {

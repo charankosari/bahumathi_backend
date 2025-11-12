@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const userController = require("../controllers/user.controller");
 const conversationController = require("../controllers/conversation.controller");
+const notificationController = require("../controllers/notification.controller");
 const { isAuthorized, roleAuthorize } = require("../middlewares/auth");
 
 router.route("/signup").post(userController.signup);
@@ -46,5 +47,25 @@ router
   .post(isAuthorized, userController.generateUserQr);
 
 router.route("/me/fcm-token").post(isAuthorized, userController.updateFcmToken);
+
+// Notification routes
+router
+  .route("/me/notifications")
+  .get(isAuthorized, notificationController.getNotifications);
+router
+  .route("/me/notifications/unread-count")
+  .get(isAuthorized, notificationController.getUnreadCount);
+router
+  .route("/me/notifications/mark-all-seen")
+  .patch(isAuthorized, notificationController.markAllAsSeen);
+router
+  .route("/me/notifications/:notificationId/seen")
+  .patch(isAuthorized, notificationController.markAsSeen);
+router
+  .route("/me/notifications/:notificationId/opened")
+  .patch(isAuthorized, notificationController.markAsOpened);
+router
+  .route("/me/notifications/:notificationId")
+  .delete(isAuthorized, notificationController.deleteNotification);
 
 module.exports = router;
