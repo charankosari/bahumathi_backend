@@ -28,6 +28,7 @@ async function allocateGift({
   }
 
   // Find the gift - must belong to the user and not be already allotted
+  // For self gifts, we allow auto-allocation even if status is pending
   const query = {
     _id: giftId,
     receiverId: userId,
@@ -46,7 +47,8 @@ async function allocateGift({
   }
 
   // Check if gift is paid (if payment is required)
-  if (gift.isPaid === false && gift.status === "pending") {
+  // Skip payment check for self gifts as they should be auto-allotted
+  if (!gift.isSelfGift && gift.isPaid === false && gift.status === "pending") {
     throw new Error("Gift payment is pending. Please complete payment first.");
   }
 

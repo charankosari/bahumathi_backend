@@ -243,6 +243,7 @@ function initChatSocket(io) {
 
         // --- GIFT CREATION ---
         // actualReceiverId is always set now (either User._id or UserWithNoAccount._id)
+        const isSelfGift = giftData.isSelfGift || false;
         const [giftRecord] = await Gift.create(
           [
             {
@@ -260,10 +261,34 @@ function initChatSocket(io) {
               status: "pending",
               note: giftData.note || null,
               conversationId: conversation?._id || null,
+              isSelfGift: isSelfGift,
             },
           ],
           { session }
         );
+
+        // --- AUTO-ALLOT SELF GIFTS ---
+        // If this is a self gift, automatically allot it with the same type
+        if (isSelfGift && String(senderId) === String(actualReceiverId)) {
+          try {
+            const allocationType = giftRecord.type; // Allocate as the same type (gold or stock)
+            await allocateGift({
+              giftId: giftRecord._id,
+              userId: String(actualReceiverId),
+              allocationType: allocationType,
+              session: session,
+            });
+            console.log(
+              `✅ Auto-allotted self gift ${giftRecord._id} as ${allocationType}`
+            );
+          } catch (allocationError) {
+            console.error(
+              `❌ Error auto-allotting self gift: ${allocationError.message}`
+            );
+            // Don't fail the gift creation if auto-allocation fails
+            // The gift will remain unallotted and can be manually allotted later
+          }
+        }
 
         // --- Commit ---
         await session.commitTransaction();
@@ -546,6 +571,7 @@ function initChatSocket(io) {
         let giftRecord = null;
         if (gift) {
           // Create new gift from provided data
+          const isSelfGift = gift.isSelfGift || false;
           [giftRecord] = await Gift.create(
             [
               {
@@ -563,11 +589,34 @@ function initChatSocket(io) {
                 status: "pending",
                 note: gift.note || null,
                 conversationId: conversation?._id || null,
-                isSelfGift: gift.isSelfGift || false,
+                isSelfGift: isSelfGift,
               },
             ],
             { session } // Pass session
           );
+
+          // --- AUTO-ALLOT SELF GIFTS ---
+          // If this is a self gift, automatically allot it with the same type
+          if (isSelfGift && String(senderId) === String(actualReceiverId)) {
+            try {
+              const allocationType = giftRecord.type; // Allocate as the same type (gold or stock)
+              await allocateGift({
+                giftId: giftRecord._id,
+                userId: String(actualReceiverId),
+                allocationType: allocationType,
+                session: session,
+              });
+              console.log(
+                `✅ Auto-allotted self gift ${giftRecord._id} as ${allocationType}`
+              );
+            } catch (allocationError) {
+              console.error(
+                `❌ Error auto-allotting self gift: ${allocationError.message}`
+              );
+              // Don't fail the gift creation if auto-allocation fails
+              // The gift will remain unallotted and can be manually allotted later
+            }
+          }
         } else if (giftId) {
           // --- VALIDATE EXISTING GIFT (Two-Step Call) ---
           giftRecord = await Gift.findOne({

@@ -5,6 +5,7 @@ const Conversation = require("../../models/Conversation");
 const User = require("../../models/user.model");
 const { validateSignature } = require("./razorpay");
 const { sendGiftNotification } = require("../../services/fcm.service");
+const { allocateGift } = require("../../services/giftAllocation.service");
 
 const captureHook = async (req, res) => {
   try {
@@ -58,6 +59,40 @@ const captureHook = async (req, res) => {
     gift.paymentId = paymentEntity.id;
     gift.paymentStatus = "captured";
     await gift.save();
+
+    // ✅ AUTO-ALLOT SELF GIFTS AFTER PAYMENT
+    // If this is a self gift and not already allotted, auto-allot it
+    if (
+      gift.isSelfGift &&
+      !gift.isAllotted &&
+      String(sender_id) === String(receiver_id)
+    ) {
+      try {
+        const allocationType = gift.type; // Allocate as the same type (gold or stock)
+        await allocateGift({
+          giftId: gift._id,
+          userId: String(receiver_id),
+          allocationType: allocationType,
+          session: null, // No session needed here as gift is already saved
+        });
+        console.log(
+          `✅ Auto-allotted self gift ${gift._id} after payment as ${allocationType}`
+        );
+        // Reload gift to get updated allocation details
+        const updatedGift = await Gift.findById(gift._id)
+          .populate("senderId", "fullName image")
+          .populate("receiverId", "fullName image");
+        if (updatedGift) {
+          gift = updatedGift;
+        }
+      } catch (allocationError) {
+        console.error(
+          `❌ Error auto-allotting self gift after payment: ${allocationError.message}`
+        );
+        // Don't fail the webhook if auto-allocation fails
+        // The gift will remain unallotted and can be manually allotted later
+      }
+    }
 
     // ✅ Ensure conversation exists
     let conversation = await Conversation.findById(conversation_id);
