@@ -10,6 +10,7 @@ const {
   sendGiftNotification,
   sendGiftWithMessageNotification,
 } = require("../services/fcm.service");
+const { allocateGift } = require("../services/giftAllocation.service");
 
 function initChatSocket(io) {
   const onlineUsers = new Map(); // Tracks userId -> socketId
@@ -865,37 +866,56 @@ function initChatSocket(io) {
     });
 
     // 6. Handle gift allotment (securely)
-    // This should also use a transaction if it involves complex multi-step logic
-    // (e.g., updating user's portfolio, creating a log)
+    // Uses the same allocation service as REST API for consistency
     socket.on("allotGift", async ({ giftId, chosenType }) => {
-      // For complex allotment, start a session here
+      const session = await mongoose.startSession();
+      session.startTransaction();
+
       try {
         const userId = socket.user.id; // Use trusted user ID
-        const gift = await Gift.findOneAndUpdate(
-          { _id: giftId, receiverId: userId, isAllotted: false },
-          {
-            isAllotted: true,
-            allottedAt: new Date(),
-            convertedTo: chosenType,
-            hiddenFromSender: true,
-            status: "allotted", // Update status
-          },
-          { new: true }
-        );
 
-        if (!gift)
-          return socket.emit("error", "Gift not found or already allotted.");
+        // Validate allocation type
+        if (!chosenType || !["gold", "stock"].includes(chosenType)) {
+          await session.abortTransaction();
+          return socket.emit("error", {
+            message: "chosenType must be either 'gold' or 'stock'",
+          });
+        }
+
+        // Use the shared allocation service
+        const gift = await allocateGift({
+          giftId,
+          userId,
+          allocationType: chosenType,
+          session,
+        });
+
+        // Commit transaction
+        await session.commitTransaction();
 
         // If allotment was successful:
-        socket.emit("giftAllotted", gift);
+        socket.emit("giftAllotted", {
+          giftId: gift._id,
+          gift: gift,
+          allocationType: chosenType,
+          convertedQuantity: gift.quantity,
+        });
+
         // Let the sender know their gift was accepted
-        io.to(gift.senderId).emit("giftAccepted", {
+        io.to(String(gift.senderId)).emit("giftAccepted", {
           giftId: gift._id,
           conversationId: gift.conversationId,
+          allocationType: chosenType,
         });
       } catch (err) {
-        console.error("Error allotting gift:", err.message);
-        socket.emit("error", "Failed to allot gift.");
+        await session.abortTransaction();
+        console.error("❌ [allotGift] Error allotting gift:", err.message);
+        console.error("❌ [allotGift] Error stack:", err.stack);
+        socket.emit("error", {
+          message: err.message || "Failed to allot gift.",
+        });
+      } finally {
+        await session.endSession();
       }
     });
 

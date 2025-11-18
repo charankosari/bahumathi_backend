@@ -22,10 +22,12 @@ const giftSchema = new mongoose.Schema(
     name: { type: String }, // e.g. TCS, Gold 24K
     icon: { type: String },
 
-    valueInINR: { type: Number, required: true },
-    quantity: { type: Number, required: true },
+    valueInINR: { type: Number, required: true }, // Current value (updated on allocation)
+    originalValueInINR: { type: Number, default: null }, // Original value at gift time
+    allottedValueInINR: { type: Number, default: null }, // Value at allocation time
+    quantity: { type: Number, required: true }, // Current quantity (updated on allocation)
     pricePerUnitAtGift: { type: Number, required: true },
-    currentPricePerUnit: { type: Number, default: null },
+    currentPricePerUnit: { type: Number, default: null }, // Current market price
 
     status: {
       type: String,

@@ -111,6 +111,8 @@ const server = httpServer.listen(PORT, () =>
 
 // Export a getter so other modules can access the live io instance safely
 module.exports.getIO = () => io;
+// Also export io directly for backward compatibility
+module.exports.io = io;
 
 // Process-level error handlers
 process.on("uncaughtException", (err) => {
