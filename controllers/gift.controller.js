@@ -41,23 +41,28 @@ exports.allocateGift = asyncHandler(async (req, res, next) => {
     // Commit transaction
     await session.commitTransaction();
 
-    // Emit socket events to notify both sender and receiver
-    const io = getIO();
-    if (io) {
-      // Notify receiver
-      io.to(userId).emit("giftAllotted", {
-        giftId: gift._id,
-        gift: gift,
-        allocationType: allocationType,
-        convertedQuantity: convertedQuantity,
-      });
+    // Emit socket events to notify both sender and receiver (outside transaction)
+    try {
+      const io = getIO();
+      if (io) {
+        // Notify receiver
+        io.to(userId).emit("giftAllotted", {
+          giftId: gift._id,
+          gift: gift,
+          allocationType: allocationType,
+          convertedQuantity: convertedQuantity,
+        });
 
-      // Notify sender
-      io.to(String(gift.senderId)).emit("giftAccepted", {
-        giftId: gift._id,
-        conversationId: gift.conversationId,
-        allocationType: allocationType,
-      });
+        // Notify sender
+        io.to(String(gift.senderId)).emit("giftAccepted", {
+          giftId: gift._id,
+          conversationId: gift.conversationId,
+          allocationType: allocationType,
+        });
+      }
+    } catch (socketError) {
+      // Don't fail the request if socket emission fails
+      console.error("Error emitting socket events:", socketError);
     }
 
     res.status(200).json({
@@ -80,10 +85,15 @@ exports.allocateGift = asyncHandler(async (req, res, next) => {
       },
     });
   } catch (error) {
-    await session.abortTransaction();
-    throw error;
+    // Only abort if transaction hasn't been committed yet
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+    }
+    const err = new Error(error.message || "Failed to allocate gift");
+    err.statusCode = error.statusCode || 500;
+    return next(err);
   } finally {
-    session.endSession();
+    await session.endSession();
   }
 });
 
