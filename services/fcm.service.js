@@ -81,6 +81,11 @@ const sendPushNotification = async (fcmToken, notification, data = {}) => {
           sound: "default",
           channelId: "bahumati_notifications",
           priority: "high",
+          // Add image for rich notifications (user DP)
+          imageUrl: data.senderImage || undefined,
+          // Add app icon and name
+          icon: "ic_notification", // App icon name
+          color: "#7B2CBF", // App primary color (purple)
         },
       },
       apns: {
@@ -88,7 +93,25 @@ const sendPushNotification = async (fcmToken, notification, data = {}) => {
           aps: {
             sound: "default",
             badge: 1,
+            // Add app name and icon for iOS
+            alert: {
+              title: notification.title || "Bahumati",
+              body: notification.body || "You have a new notification",
+            },
           },
+          // Add image for rich notifications (user DP)
+          fcm_options: {
+            image: data.senderImage || undefined,
+          },
+        },
+      },
+      // Add web push notification config
+      webpush: {
+        notification: {
+          title: notification.title || "Bahumati",
+          body: notification.body || "You have a new notification",
+          icon: data.senderImage || undefined,
+          badge: "/icon-192x192.png",
         },
       },
     };
@@ -234,32 +257,37 @@ const sendMessageNotification = async (
 ) => {
   const senderName = senderData?.fullName || "Someone";
   const messageType = messageData?.type || "text";
+  const senderImage = senderData?.image?.toString() || "";
 
   let notificationBody = "";
   // Use unencrypted content if provided, otherwise try to use content from messageData
   // For text messages, prefer unencrypted content
   if (messageType === "text") {
     notificationBody =
-      unencryptedContent || messageData?.content || "Sent you a message";
+      unencryptedContent || messageData?.content || "sent you a message";
     // Limit message length to 100 characters for notification
     if (notificationBody.length > 100) {
       notificationBody = notificationBody.substring(0, 97) + "...";
     }
   } else if (messageType === "image") {
-    notificationBody = "📷 Sent you a photo";
+    notificationBody = "📷 sent you a photo";
   } else if (messageType === "voice") {
-    notificationBody = "🎤 Sent you a voice message";
+    notificationBody = "🎤 sent you a voice message";
   } else if (messageType === "video") {
-    notificationBody = "🎥 Sent you a video";
+    notificationBody = "🎥 sent you a video";
   } else {
-    notificationBody = "Sent you a message";
+    notificationBody = "sent you a message";
   }
+
+  // Format: "Username: message content" for better display
+  const notificationTitle = senderName;
+  const notificationBodyFormatted = notificationBody;
 
   const notificationResult = await sendPushNotification(
     fcmToken,
     {
-      title: senderName,
-      body: notificationBody,
+      title: notificationTitle,
+      body: notificationBodyFormatted,
     },
     {
       type: "message",
@@ -267,8 +295,10 @@ const sendMessageNotification = async (
       conversationId: messageData?.conversationId?.toString() || "",
       senderId: senderData?._id?.toString() || "",
       senderName: senderName,
-      senderImage: senderData?.image?.toString() || "",
+      senderImage: senderImage,
       messageType: messageType,
+      messageContent: notificationBody, // Include message content in data
+      appName: "Bahumati", // App name
     }
   );
 
@@ -308,16 +338,18 @@ const sendGiftNotification = async (fcmToken, giftData, senderData) => {
   const senderName = senderData?.fullName || "Someone";
   const giftType = giftData?.type || "gold";
   const amount = giftData?.valueInINR || 0;
+  const senderImage = senderData?.image?.toString() || "";
 
   const giftTypeName = giftType === "gold" ? "gold" : "stocks";
 
-  // Shortened notification: "A gift sent by [username] in gold/stocks worth ₹2500"
-  const notificationBody = `A gift sent by ${senderName} in ${giftTypeName} worth ₹${amount.toLocaleString()}`;
+  // Format: "[username] sent you a gift" for better display
+  const notificationTitle = senderName;
+  const notificationBody = `sent you a gift worth ₹${amount.toLocaleString()}`;
 
   const notificationResult = await sendPushNotification(
     fcmToken,
     {
-      title: "🎁 New Gift Received!",
+      title: notificationTitle,
       body: notificationBody,
     },
     {
@@ -326,9 +358,10 @@ const sendGiftNotification = async (fcmToken, giftData, senderData) => {
       conversationId: giftData?.conversationId?.toString() || "",
       senderId: senderData?._id?.toString() || "",
       senderName: senderName,
-      senderImage: senderData?.image?.toString() || "",
+      senderImage: senderImage,
       giftType: giftType,
       amount: amount.toString(),
+      appName: "Bahumati", // App name
     }
   );
 
@@ -375,16 +408,39 @@ const sendGiftWithMessageNotification = async (
   const senderName = senderData?.fullName || "Someone";
   const giftType = giftData?.type || "gold";
   const amount = giftData?.valueInINR || 0;
+  const senderImage = senderData?.image?.toString() || "";
 
-  const giftTypeName = giftType === "gold" ? "gold" : "stocks";
+  const messageType = messageData?.type || "text";
+  let messageContent = "";
 
-  // Shortened notification: "A gift sent by [username] in gold/stocks worth ₹2500"
-  const notificationBody = `A gift sent by ${senderName} in ${giftTypeName} worth ₹${amount.toLocaleString()}`;
+  // Get message content for notification
+  if (messageType === "text") {
+    messageContent =
+      unencryptedContent ||
+      messageData?.content ||
+      "sent you a gift with message";
+    // Limit message length to 80 characters for notification
+    if (messageContent.length > 80) {
+      messageContent = messageContent.substring(0, 77) + "...";
+    }
+  } else if (messageType === "image") {
+    messageContent = "📷 sent you a gift with a photo";
+  } else if (messageType === "voice") {
+    messageContent = "🎤 sent you a gift with a voice message";
+  } else if (messageType === "video") {
+    messageContent = "🎥 sent you a gift with a video";
+  } else {
+    messageContent = "sent you a gift with message";
+  }
+
+  // Format: "[username]: message content" for better display
+  const notificationTitle = senderName;
+  const notificationBody = messageContent;
 
   const notificationResult = await sendPushNotification(
     fcmToken,
     {
-      title: "🎁 Gift with Message!",
+      title: notificationTitle,
       body: notificationBody,
     },
     {
@@ -394,9 +450,12 @@ const sendGiftWithMessageNotification = async (
       conversationId: giftData?.conversationId?.toString() || "",
       senderId: senderData?._id?.toString() || "",
       senderName: senderName,
-      senderImage: senderData?.image?.toString() || "",
+      senderImage: senderImage,
       giftType: giftType,
       amount: amount.toString(),
+      messageType: messageType,
+      messageContent: messageContent, // Include message content in data
+      appName: "Bahumati", // App name
     }
   );
 
