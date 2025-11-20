@@ -86,6 +86,8 @@ const sendPushNotification = async (fcmToken, notification, data = {}) => {
           // Add app icon and name
           icon: "ic_notification", // App icon name
           color: "#7B2CBF", // App primary color (purple)
+          // Tag to group notifications by sender
+          tag: data.senderId || "message",
         },
       },
       apns: {
@@ -260,26 +262,20 @@ const sendMessageNotification = async (
   const senderImage = senderData?.image?.toString() || "";
 
   let notificationBody = "";
-  // Use unencrypted content if provided, otherwise try to use content from messageData
-  // For text messages, prefer unencrypted content
+  // Format notification body as "sent a message" instead of showing message content
   if (messageType === "text") {
-    notificationBody =
-      unencryptedContent || messageData?.content || "sent you a message";
-    // Limit message length to 100 characters for notification
-    if (notificationBody.length > 100) {
-      notificationBody = notificationBody.substring(0, 97) + "...";
-    }
+    notificationBody = "sent a message";
   } else if (messageType === "image") {
-    notificationBody = "📷 sent you a photo";
+    notificationBody = "sent a photo";
   } else if (messageType === "voice") {
-    notificationBody = "🎤 sent you a voice message";
+    notificationBody = "sent a voice message";
   } else if (messageType === "video") {
-    notificationBody = "🎥 sent you a video";
+    notificationBody = "sent a video";
   } else {
-    notificationBody = "sent you a message";
+    notificationBody = "sent a message";
   }
 
-  // Format: "Username: message content" for better display
+  // Format: Title = User name, Body = "sent a message"
   const notificationTitle = senderName;
   const notificationBodyFormatted = notificationBody;
 
@@ -291,7 +287,7 @@ const sendMessageNotification = async (
         userId: messageData.receiverId,
         type: "message",
         title: senderName,
-        description: notificationBody,
+        description: notificationBody, // "sent a message"
         senderId: senderData?._id,
         senderName: senderName,
         senderImage: senderData?.image,
@@ -344,9 +340,9 @@ const sendGiftNotification = async (fcmToken, giftData, senderData) => {
 
   const giftTypeName = giftType === "gold" ? "gold" : "stocks";
 
-  // Format: "[username] sent you a gift" for better display
+  // Format: Title = User name, Body = "sent you a gift"
   const notificationTitle = senderName;
-  const notificationBody = `sent you a gift worth ₹${amount.toLocaleString()}`;
+  const notificationBody = "sent you a gift";
 
   // Save notification to database first to get the notification ID
   let savedNotification = null;
@@ -355,7 +351,7 @@ const sendGiftNotification = async (fcmToken, giftData, senderData) => {
       savedNotification = await Notification.create({
         userId: giftData.receiverId,
         type: "gift",
-        title: "🎁 New Gift Received!",
+        title: senderName,
         description: notificationBody,
         senderId: senderData?._id,
         senderName: senderName,
@@ -415,31 +411,23 @@ const sendGiftWithMessageNotification = async (
   const senderImage = senderData?.image?.toString() || "";
 
   const messageType = messageData?.type || "text";
-  let messageContent = "";
+  let notificationBody = "";
 
-  // Get message content for notification
+  // Format notification body as "sent you a gift with message" instead of showing message content
   if (messageType === "text") {
-    messageContent =
-      unencryptedContent ||
-      messageData?.content ||
-      "sent you a gift with message";
-    // Limit message length to 80 characters for notification
-    if (messageContent.length > 80) {
-      messageContent = messageContent.substring(0, 77) + "...";
-    }
+    notificationBody = "sent you a gift with message";
   } else if (messageType === "image") {
-    messageContent = "📷 sent you a gift with a photo";
+    notificationBody = "sent you a gift with a photo";
   } else if (messageType === "voice") {
-    messageContent = "🎤 sent you a gift with a voice message";
+    notificationBody = "sent you a gift with a voice message";
   } else if (messageType === "video") {
-    messageContent = "🎥 sent you a gift with a video";
+    notificationBody = "sent you a gift with a video";
   } else {
-    messageContent = "sent you a gift with message";
+    notificationBody = "sent you a gift with message";
   }
 
-  // Format: "[username]: message content" for better display
+  // Format: Title = User name, Body = "sent you a gift with message"
   const notificationTitle = senderName;
-  const notificationBody = messageContent;
 
   // Save notification to database first to get the notification ID
   let savedNotification = null;
@@ -448,7 +436,7 @@ const sendGiftWithMessageNotification = async (
       savedNotification = await Notification.create({
         userId: giftData.receiverId,
         type: "giftWithMessage",
-        title: "🎁 Gift with Message!",
+        title: senderName,
         description: notificationBody,
         senderId: senderData?._id,
         senderName: senderName,
@@ -483,7 +471,6 @@ const sendGiftWithMessageNotification = async (
       giftType: giftType,
       amount: amount.toString(),
       messageType: messageType,
-      messageContent: messageContent, // Include message content in data
       appName: "Bahumati", // App name
     }
   );

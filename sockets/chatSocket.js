@@ -818,20 +818,40 @@ function initChatSocket(io) {
           } else {
             // Receiver is a registered User - try to send FCM notification
             if (receiver?.fcmToken) {
-              if (giftRecord) {
-                // Pass unencrypted content for notification
-                await sendGiftWithMessageNotification(
-                  receiver.fcmToken,
-                  giftRecord,
-                  newMessage || giftRecord, // Use giftRecord if no message
-                  sender,
-                  content // Pass unencrypted content
-                );
-                console.log(
-                  `📱 Push notification sent for gift with message to ${actualReceiverId}`
-                );
+              // If gift was just created in this transaction AND message was created,
+              // send giftWithMessage notification
+              // Otherwise, if gift already existed (giftId was provided), send separate message notification
+              // If only message (no gift), send message notification
+              if (giftRecord && newMessage) {
+                // Check if gift already existed (giftId was provided) or was just created
+                if (giftId) {
+                  // Gift already existed, message sent after - send message notification only
+                  // (Gift notification was already sent when gift was created via sendGift)
+                  await sendMessageNotification(
+                    receiver.fcmToken,
+                    newMessage,
+                    sender,
+                    content // Pass unencrypted content
+                  );
+                  console.log(
+                    `📱 Push notification sent for message (after gift) to ${actualReceiverId}`
+                  );
+                } else {
+                  // Gift and message created together in this transaction
+                  // Send giftWithMessage notification
+                  await sendGiftWithMessageNotification(
+                    receiver.fcmToken,
+                    giftRecord,
+                    newMessage,
+                    sender,
+                    content // Pass unencrypted content
+                  );
+                  console.log(
+                    `📱 Push notification sent for gift with message to ${actualReceiverId}`
+                  );
+                }
               } else if (newMessage) {
-                // Pass unencrypted content for notification
+                // Only message, no gift - send message notification
                 await sendMessageNotification(
                   receiver.fcmToken,
                   newMessage,
