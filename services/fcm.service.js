@@ -283,29 +283,11 @@ const sendMessageNotification = async (
   const notificationTitle = senderName;
   const notificationBodyFormatted = notificationBody;
 
-  const notificationResult = await sendPushNotification(
-    fcmToken,
-    {
-      title: notificationTitle,
-      body: notificationBodyFormatted,
-    },
-    {
-      type: "message",
-      messageId: messageData?._id?.toString() || "",
-      conversationId: messageData?.conversationId?.toString() || "",
-      senderId: senderData?._id?.toString() || "",
-      senderName: senderName,
-      senderImage: senderImage,
-      messageType: messageType,
-      messageContent: notificationBody, // Include message content in data
-      appName: "Bahumati", // App name
-    }
-  );
-
-  // Save notification to database
-  if (messageData?.receiverId && notificationResult.success) {
+  // Save notification to database first to get the notification ID
+  let savedNotification = null;
+  if (messageData?.receiverId) {
     try {
-      await Notification.create({
+      savedNotification = await Notification.create({
         userId: messageData.receiverId,
         type: "message",
         title: senderName,
@@ -323,6 +305,26 @@ const sendMessageNotification = async (
       console.error("❌ Error saving notification to database:", error.message);
     }
   }
+
+  const notificationResult = await sendPushNotification(
+    fcmToken,
+    {
+      title: notificationTitle,
+      body: notificationBodyFormatted,
+    },
+    {
+      type: "message",
+      notificationId: savedNotification?._id?.toString() || "",
+      messageId: messageData?._id?.toString() || "",
+      conversationId: messageData?.conversationId?.toString() || "",
+      senderId: senderData?._id?.toString() || "",
+      senderName: senderName,
+      senderImage: senderImage,
+      messageType: messageType,
+      messageContent: notificationBody, // Include message content in data
+      appName: "Bahumati", // App name
+    }
+  );
 
   return notificationResult;
 };
@@ -346,29 +348,11 @@ const sendGiftNotification = async (fcmToken, giftData, senderData) => {
   const notificationTitle = senderName;
   const notificationBody = `sent you a gift worth ₹${amount.toLocaleString()}`;
 
-  const notificationResult = await sendPushNotification(
-    fcmToken,
-    {
-      title: notificationTitle,
-      body: notificationBody,
-    },
-    {
-      type: "gift",
-      giftId: giftData?._id?.toString() || "",
-      conversationId: giftData?.conversationId?.toString() || "",
-      senderId: senderData?._id?.toString() || "",
-      senderName: senderName,
-      senderImage: senderImage,
-      giftType: giftType,
-      amount: amount.toString(),
-      appName: "Bahumati", // App name
-    }
-  );
-
-  // Save notification to database
-  if (giftData?.receiverId && notificationResult.success) {
+  // Save notification to database first to get the notification ID
+  let savedNotification = null;
+  if (giftData?.receiverId) {
     try {
-      await Notification.create({
+      savedNotification = await Notification.create({
         userId: giftData.receiverId,
         type: "gift",
         title: "🎁 New Gift Received!",
@@ -386,6 +370,26 @@ const sendGiftNotification = async (fcmToken, giftData, senderData) => {
       console.error("❌ Error saving notification to database:", error.message);
     }
   }
+
+  const notificationResult = await sendPushNotification(
+    fcmToken,
+    {
+      title: notificationTitle,
+      body: notificationBody,
+    },
+    {
+      type: "gift",
+      notificationId: savedNotification?._id?.toString() || "",
+      giftId: giftData?._id?.toString() || "",
+      conversationId: giftData?.conversationId?.toString() || "",
+      senderId: senderData?._id?.toString() || "",
+      senderName: senderName,
+      senderImage: senderImage,
+      giftType: giftType,
+      amount: amount.toString(),
+      appName: "Bahumati", // App name
+    }
+  );
 
   return notificationResult;
 };
@@ -437,32 +441,11 @@ const sendGiftWithMessageNotification = async (
   const notificationTitle = senderName;
   const notificationBody = messageContent;
 
-  const notificationResult = await sendPushNotification(
-    fcmToken,
-    {
-      title: notificationTitle,
-      body: notificationBody,
-    },
-    {
-      type: "giftWithMessage",
-      giftId: giftData?._id?.toString() || "",
-      messageId: messageData?._id?.toString() || "",
-      conversationId: giftData?.conversationId?.toString() || "",
-      senderId: senderData?._id?.toString() || "",
-      senderName: senderName,
-      senderImage: senderImage,
-      giftType: giftType,
-      amount: amount.toString(),
-      messageType: messageType,
-      messageContent: messageContent, // Include message content in data
-      appName: "Bahumati", // App name
-    }
-  );
-
-  // Save notification to database
-  if (giftData?.receiverId && notificationResult.success) {
+  // Save notification to database first to get the notification ID
+  let savedNotification = null;
+  if (giftData?.receiverId) {
     try {
-      await Notification.create({
+      savedNotification = await Notification.create({
         userId: giftData.receiverId,
         type: "giftWithMessage",
         title: "🎁 Gift with Message!",
@@ -481,6 +464,29 @@ const sendGiftWithMessageNotification = async (
       console.error("❌ Error saving notification to database:", error.message);
     }
   }
+
+  const notificationResult = await sendPushNotification(
+    fcmToken,
+    {
+      title: notificationTitle,
+      body: notificationBody,
+    },
+    {
+      type: "giftWithMessage",
+      notificationId: savedNotification?._id?.toString() || "",
+      giftId: giftData?._id?.toString() || "",
+      messageId: messageData?._id?.toString() || "",
+      conversationId: giftData?.conversationId?.toString() || "",
+      senderId: senderData?._id?.toString() || "",
+      senderName: senderName,
+      senderImage: senderImage,
+      giftType: giftType,
+      amount: amount.toString(),
+      messageType: messageType,
+      messageContent: messageContent, // Include message content in data
+      appName: "Bahumati", // App name
+    }
+  );
 
   return notificationResult;
 };
