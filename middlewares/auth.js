@@ -24,13 +24,22 @@ exports.isAuthorized = asyncHandler(async (req, res, next) => {
 
 exports.roleAuthorize = (...roles) => {
   return (req, res, next) => {
+    if (!req.user || !req.user.role) {
+      const err = new Error("User role not found");
+      err.statusCode = 403;
+      return next(err);
+    }
+
     if (!roles.includes(req.user.role)) {
-      return next(
-        new errorHandler(
-          `Role '${req.user.role}' is not authorized to access this resource`,
-          403
-        )
+      const err = new Error(
+        `Role '${
+          req.user.role
+        }' is not authorized to access this resource. Required roles: ${roles.join(
+          ", "
+        )}`
       );
+      err.statusCode = 403;
+      return next(err);
     }
     next();
   };

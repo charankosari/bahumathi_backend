@@ -93,6 +93,13 @@ const giftSchema = new mongoose.Schema(
       default: null,
     },
 
+    eventId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Event",
+      default: null,
+      index: true,
+    },
+
     note: { type: String },
     isViewedByReceiver: { type: Boolean, default: false },
   },

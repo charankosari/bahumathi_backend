@@ -328,6 +328,35 @@ function initChatSocket(io) {
         };
         const transactionId = await generateUniqueTransactionId();
 
+        // Handle eventId if provided
+        let eventId = null;
+        if (giftData.eventId) {
+          const Event = require("../models/Event");
+          const event = await Event.findById(giftData.eventId).session(session);
+
+          if (!event) {
+            throw new Error("Event not found");
+          }
+
+          // Validate event is active
+          if (event.status !== "active") {
+            throw new Error("Cannot send gift to inactive event");
+          }
+
+          // Validate event dates
+          const now = new Date();
+          if (now < event.eventStartDate || now > event.eventEndDate) {
+            throw new Error("Cannot send gift outside event date range");
+          }
+
+          // Validate receiver is the event creator
+          if (String(actualReceiverId) !== String(event.creatorId)) {
+            throw new Error("Gifts can only be sent to the event creator");
+          }
+
+          eventId = event._id;
+        }
+
         const [giftRecord] = await Gift.create(
           [
             {
@@ -345,12 +374,28 @@ function initChatSocket(io) {
               status: "pending",
               note: giftData.note || null,
               conversationId: conversation?._id || null,
+              eventId: eventId,
               isSelfGift: isSelfGift,
               transactionId: transactionId,
             },
           ],
           { session }
         );
+
+        // Update event stats if this is an event gift
+        if (eventId) {
+          const Event = require("../models/Event");
+          await Event.findByIdAndUpdate(
+            eventId,
+            {
+              $inc: {
+                totalGiftsReceived: 1,
+                totalGiftsAmount: giftData.valueInINR || 0,
+              },
+            },
+            { session }
+          );
+        }
 
         // --- AUTO-ALLOT SELF GIFTS ---
         // If this is a self gift, automatically allot it with the same type

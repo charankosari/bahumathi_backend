@@ -17,6 +17,13 @@ const userHistorySchema = new mongoose.Schema(
       min: 0,
     },
 
+    // Holding money (in INR) - money that is in withdrawal request pending state
+    holdingMoney: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
     // Allotted money breakdown
     allottedMoney: {
       gold: {
@@ -194,10 +201,16 @@ userHistorySchema.statics.getOrCreate = async function (userId) {
     userHistory = await this.create({
       userId: userId,
       unallottedMoney: 0,
+      holdingMoney: 0,
       allottedMoney: { gold: 0, stock: 0 },
       allocationHistory: [],
       giftHistory: [],
     });
+  }
+  // Ensure holdingMoney exists for existing records
+  if (userHistory.holdingMoney === undefined) {
+    userHistory.holdingMoney = 0;
+    await userHistory.save();
   }
   return userHistory;
 };
