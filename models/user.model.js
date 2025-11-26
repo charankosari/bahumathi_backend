@@ -5,8 +5,8 @@ const jwt = require("jsonwebtoken");
 const userSchema = new mongoose.Schema({
   fullName: {
     type: String,
-    required: [true, "Please provide your full name"],
     trim: true,
+    default: "",
   },
   gender: {
     type: String,
@@ -15,15 +15,6 @@ const userSchema = new mongoose.Schema({
   },
   birthDate: {
     type: Date,
-  },
-  email: {
-    type: String,
-    unique: true,
-    sparse: true, // Allows multiple null values, but unique if a value is present
-    match: [
-      /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/,
-      "Please add a valid email",
-    ],
   },
 
   image: {
@@ -59,6 +50,10 @@ const userSchema = new mongoose.Schema({
   fcmToken: {
     type: String,
     sparse: true, // Allows multiple null values, but unique if a value is present
+  },
+  defaultGiftMode: {
+    type: String,
+    enum: ["gold", "stock"],
   },
   createdAt: {
     type: Date,

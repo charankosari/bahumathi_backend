@@ -7,6 +7,7 @@ const connectDatabase = require("./config/database");
 const { createServer } = require("http");
 const { Server } = require("socket.io");
 const { initChatSocket } = require("./sockets/chatSocket");
+const { setSocketServer } = require("./sockets/socketEmitter");
 const redisAdapter = require("@socket.io/redis-adapter");
 const { createClient } = require("redis");
 const jwt = require("jsonwebtoken");
@@ -102,6 +103,11 @@ io.use((socket, next) => {
 
 // Initialize chat socket handlers (this attaches listeners to `io`)
 initChatSocket(io);
+setSocketServer(io);
+
+// Start auto-allocation cron job
+const { startAutoAllocationCron } = require("./services/autoAllocationCron");
+startAutoAllocationCron();
 
 // Graceful shutdown helpers
 const PORT = process.env.PORT || 5000;

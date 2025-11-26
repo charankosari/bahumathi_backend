@@ -2,21 +2,31 @@ const mongoose = require("mongoose");
 const Gift = require("../models/Gift");
 const asyncHandler = require("../middlewares/asyncHandler");
 const { getIO } = require("../server");
-const { allocateGift } = require("../services/giftAllocation.service");
+const {
+  allocateGift,
+  getUserAllocationSummary,
+} = require("../services/giftAllocation.service");
 
 /**
- * Allocate/Convert a gift to gold or top 50 stocks
+ * Allocate money from user's unallotted money to gold or stock
  * POST /api/v1/gifts/:giftId/allocate
- * Body: { allocationType: "gold" | "stock" }
+ * Body: { allocationType: "gold" | "stock", amount: number (required) }
  */
 exports.allocateGift = asyncHandler(async (req, res, next) => {
   const { giftId } = req.params;
-  const { allocationType } = req.body;
+  const { allocationType, amount } = req.body;
   const userId = req.user.id;
 
   // Validate allocation type
   if (!allocationType || !["gold", "stock"].includes(allocationType)) {
     const err = new Error("allocationType must be either 'gold' or 'stock'");
+    err.statusCode = 400;
+    return next(err);
+  }
+
+  // Validate amount
+  if (!amount || typeof amount !== "number" || amount <= 0) {
+    const err = new Error("amount is required and must be a positive number");
     err.statusCode = 400;
     return next(err);
   }
@@ -27,16 +37,15 @@ exports.allocateGift = asyncHandler(async (req, res, next) => {
 
   try {
     // Use the shared allocation service (handles validation and conversion)
-    const gift = await allocateGift({
+    const result = await allocateGift({
       giftId,
       userId,
       allocationType,
+      amount,
       session,
     });
 
-    // Extract conversion details for response
-    const conversionDetails = gift.conversionDetails;
-    const convertedQuantity = gift.quantity;
+    const { userHistory, allocationDetails } = result;
 
     // Commit transaction
     await session.commitTransaction();
@@ -47,18 +56,25 @@ exports.allocateGift = asyncHandler(async (req, res, next) => {
       if (io) {
         // Notify receiver
         io.to(userId).emit("giftAllotted", {
-          giftId: gift._id,
-          gift: gift,
+          giftId: giftId,
           allocationType: allocationType,
-          convertedQuantity: convertedQuantity,
+          amount: amount,
+          remainingUnallotted: userHistory.unallottedMoney,
         });
 
-        // Notify sender
-        io.to(String(gift.senderId)).emit("giftAccepted", {
-          giftId: gift._id,
-          conversationId: gift.conversationId,
-          allocationType: allocationType,
-        });
+        // Notify sender if gift exists
+        if (giftId) {
+          const gift = await Gift.findById(giftId).select(
+            "senderId conversationId"
+          );
+          if (gift) {
+            io.to(String(gift.senderId)).emit("giftAccepted", {
+              giftId: giftId,
+              conversationId: gift.conversationId,
+              allocationType: allocationType,
+            });
+          }
+        }
       }
     } catch (socketError) {
       // Don't fail the request if socket emission fails
@@ -67,21 +83,19 @@ exports.allocateGift = asyncHandler(async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      message: `Gift successfully allocated to ${allocationType}`,
-      gift: {
-        _id: gift._id,
-        type: gift.type,
-        convertedTo: allocationType,
-        isAllotted: gift.isAllotted,
-        allottedAt: gift.allottedAt,
-        conversionDetails: conversionDetails,
-        quantity: gift.quantity, // New quantity after allocation
-        convertedQuantity: convertedQuantity,
-        valueInINR: gift.valueInINR, // Current value at allocation time
-        originalValueInINR: gift.originalValueInINR, // Original value at gift time
-        allottedValueInINR: gift.allottedValueInINR, // Value at allocation time
-        currentPricePerUnit: gift.currentPricePerUnit, // Current price per unit
-        pricePerUnitAtGift: gift.pricePerUnitAtGift, // Original price at gift time
+      message: `₹${amount} successfully allocated to ${allocationType}`,
+      allocation: {
+        amount: allocationDetails.amount,
+        allocationType: allocationDetails.allocationType,
+        quantity: allocationDetails.quantity,
+        pricePerUnit: allocationDetails.pricePerUnit,
+        conversionDetails: allocationDetails.conversionDetails,
+      },
+      userHistory: {
+        unallottedMoney: userHistory.unallottedMoney,
+        allottedMoney: userHistory.allottedMoney,
+        totalAllotted:
+          userHistory.allottedMoney.gold + userHistory.allottedMoney.stock,
       },
     });
   } catch (error) {
@@ -94,6 +108,26 @@ exports.allocateGift = asyncHandler(async (req, res, next) => {
     return next(err);
   } finally {
     await session.endSession();
+  }
+});
+
+/**
+ * Get user's allocation summary
+ * GET /api/v1/gifts/allocation-summary
+ */
+exports.getAllocationSummary = asyncHandler(async (req, res, next) => {
+  const userId = req.user.id;
+
+  try {
+    const summary = await getUserAllocationSummary(userId);
+    res.status(200).json({
+      success: true,
+      data: summary,
+    });
+  } catch (error) {
+    const err = new Error(error.message || "Failed to get allocation summary");
+    err.statusCode = error.statusCode || 500;
+    return next(err);
   }
 });
 

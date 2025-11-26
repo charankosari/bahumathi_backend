@@ -1,5 +1,6 @@
 const admin = require("firebase-admin");
 const Notification = require("../models/Notification");
+const { emitToUser } = require("../sockets/socketEmitter");
 
 // Initialize Firebase Admin SDK
 // Make sure to set FIREBASE_SERVICE_ACCOUNT_KEY in your .env file
@@ -40,6 +41,30 @@ const initializeFirebase = () => {
 
 // Initialize Firebase on module load
 initializeFirebase();
+
+const emitRealtimeNotification = (notificationDoc) => {
+  if (!notificationDoc) return;
+  try {
+    const userId =
+      notificationDoc.userId?.toString() ||
+      (notificationDoc.userId && notificationDoc.userId._id
+        ? notificationDoc.userId._id.toString()
+        : null);
+    if (!userId) return;
+    const payload =
+      typeof notificationDoc.toObject === "function"
+        ? notificationDoc.toObject()
+        : { ...notificationDoc };
+    payload._id = payload._id?.toString() || notificationDoc._id?.toString();
+    payload.userId = userId;
+    emitToUser(userId, "notification:new", payload);
+  } catch (error) {
+    console.error(
+      "❌ Failed to emit realtime notification:",
+      error?.message || error
+    );
+  }
+};
 
 /**
  * Send push notification to a single device
@@ -297,6 +322,7 @@ const sendMessageNotification = async (
         isOpened: false,
       });
       console.log("✅ Notification saved to database for message");
+      emitRealtimeNotification(savedNotification);
     } catch (error) {
       console.error("❌ Error saving notification to database:", error.message);
     }
@@ -340,9 +366,19 @@ const sendGiftNotification = async (fcmToken, giftData, senderData) => {
 
   const giftTypeName = giftType === "gold" ? "gold" : "stocks";
 
-  // Format: Title = User name, Body = "sent you a gift"
+  // Check if this is a self-gift
+  const isSelfGift =
+    giftData?.isSelfGift ||
+    (giftData?.senderId &&
+      giftData?.receiverId &&
+      String(giftData.senderId) === String(giftData.receiverId));
+
+  // Format: Title = User name, Body = "sent you a gift" or "You sent yourself a gift"
   const notificationTitle = senderName;
-  const notificationBody = "sent you a gift";
+  const notificationBody = isSelfGift
+    ? "You sent yourself a gift"
+    : "sent you a gift";
+  const notificationType = isSelfGift ? "selfGift" : "gift";
 
   // Save notification to database first to get the notification ID
   let savedNotification = null;
@@ -350,7 +386,7 @@ const sendGiftNotification = async (fcmToken, giftData, senderData) => {
     try {
       savedNotification = await Notification.create({
         userId: giftData.receiverId,
-        type: "gift",
+        type: notificationType,
         title: senderName,
         description: notificationBody,
         senderId: senderData?._id,
@@ -361,7 +397,8 @@ const sendGiftNotification = async (fcmToken, giftData, senderData) => {
         isSeen: false,
         isOpened: false,
       });
-      console.log("✅ Notification saved to database for gift");
+      console.log(`✅ Notification saved to database for ${notificationType}`);
+      emitRealtimeNotification(savedNotification);
     } catch (error) {
       console.error("❌ Error saving notification to database:", error.message);
     }
@@ -374,7 +411,7 @@ const sendGiftNotification = async (fcmToken, giftData, senderData) => {
       body: notificationBody,
     },
     {
-      type: "gift",
+      type: notificationType,
       notificationId: savedNotification?._id?.toString() || "",
       giftId: giftData?._id?.toString() || "",
       conversationId: giftData?.conversationId?.toString() || "",
@@ -410,24 +447,49 @@ const sendGiftWithMessageNotification = async (
   const amount = giftData?.valueInINR || 0;
   const senderImage = senderData?.image?.toString() || "";
 
+  // Check if this is a self-gift
+  const isSelfGift =
+    giftData?.isSelfGift ||
+    (giftData?.senderId &&
+      giftData?.receiverId &&
+      String(giftData.senderId) === String(giftData.receiverId));
+
   const messageType = messageData?.type || "text";
   let notificationBody = "";
 
-  // Format notification body as "sent you a gift with message" instead of showing message content
-  if (messageType === "text") {
-    notificationBody = "sent you a gift with message";
-  } else if (messageType === "image") {
-    notificationBody = "sent you a gift with a photo";
-  } else if (messageType === "voice") {
-    notificationBody = "sent you a gift with a voice message";
-  } else if (messageType === "video") {
-    notificationBody = "sent you a gift with a video";
+  // Format notification body based on message type and self-gift status
+  if (isSelfGift) {
+    if (messageType === "text") {
+      notificationBody = "You sent yourself a gift with message";
+    } else if (messageType === "image") {
+      notificationBody = "You sent yourself a gift with a photo";
+    } else if (messageType === "voice") {
+      notificationBody = "You sent yourself a gift with a voice message";
+    } else if (messageType === "video") {
+      notificationBody = "You sent yourself a gift with a video";
+    } else {
+      notificationBody = "You sent yourself a gift with message";
+    }
   } else {
-    notificationBody = "sent you a gift with message";
+    // Format notification body as "sent you a gift with message" instead of showing message content
+    if (messageType === "text") {
+      notificationBody = "sent you a gift with message";
+    } else if (messageType === "image") {
+      notificationBody = "sent you a gift with a photo";
+    } else if (messageType === "voice") {
+      notificationBody = "sent you a gift with a voice message";
+    } else if (messageType === "video") {
+      notificationBody = "sent you a gift with a video";
+    } else {
+      notificationBody = "sent you a gift with message";
+    }
   }
 
   // Format: Title = User name, Body = "sent you a gift with message"
   const notificationTitle = senderName;
+  const notificationType = isSelfGift
+    ? "selfGiftWithMessage"
+    : "giftWithMessage";
 
   // Save notification to database first to get the notification ID
   let savedNotification = null;
@@ -435,7 +497,7 @@ const sendGiftWithMessageNotification = async (
     try {
       savedNotification = await Notification.create({
         userId: giftData.receiverId,
-        type: "giftWithMessage",
+        type: notificationType,
         title: senderName,
         description: notificationBody,
         senderId: senderData?._id,
@@ -447,7 +509,8 @@ const sendGiftWithMessageNotification = async (
         isSeen: false,
         isOpened: false,
       });
-      console.log("✅ Notification saved to database for gift with message");
+      console.log(`✅ Notification saved to database for ${notificationType}`);
+      emitRealtimeNotification(savedNotification);
     } catch (error) {
       console.error("❌ Error saving notification to database:", error.message);
     }
@@ -460,7 +523,7 @@ const sendGiftWithMessageNotification = async (
       body: notificationBody,
     },
     {
-      type: "giftWithMessage",
+      type: notificationType,
       notificationId: savedNotification?._id?.toString() || "",
       giftId: giftData?._id?.toString() || "",
       messageId: messageData?._id?.toString() || "",

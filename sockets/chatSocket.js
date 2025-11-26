@@ -10,7 +10,37 @@ const {
   sendGiftNotification,
   sendGiftWithMessageNotification,
 } = require("../services/fcm.service");
-const { allocateGift } = require("../services/giftAllocation.service");
+const {
+  allocateGift,
+  addGiftToUserHistory,
+} = require("../services/giftAllocation.service");
+const AutoAllocationTask = require("../models/AutoAllocationTask");
+
+const AUTO_ALLOCATION_DELAY_MS = 24 * 60 * 60 * 1000; // T + 1 day
+
+const scheduleAutoAllocationTask = async ({
+  giftId,
+  userId,
+  delayMs = AUTO_ALLOCATION_DELAY_MS,
+}) => {
+  const scheduledAt = new Date(Date.now() + delayMs);
+
+  await AutoAllocationTask.findOneAndUpdate(
+    { giftId },
+    {
+      giftId,
+      userId,
+      scheduledAt,
+      isActive: true,
+      error: null,
+    },
+    {
+      upsert: true,
+      new: true,
+      setDefaultsOnInsert: true,
+    }
+  );
+};
 
 function initChatSocket(io) {
   const onlineUsers = new Map(); // Tracks userId -> socketId
@@ -123,6 +153,8 @@ function initChatSocket(io) {
           }).session(session);
           if (userByNumber) {
             actualReceiverId = userByNumber._id;
+            // Clear receiverNumber because this is a registered user
+            actualReceiverNumber = null;
             console.log(
               `✅ [sendGift] Found registered user: ${actualReceiverId}`
             );
@@ -223,7 +255,12 @@ function initChatSocket(io) {
               `🆕 [sendGift] Creating new conversation with participants array: [${senderObjectId}, ${receiverObjectId}]`
             );
             [conversation] = await Conversation.create(
-              [{ participants: [senderObjectId, receiverObjectId] }],
+              [
+                {
+                  participants: [senderObjectId, receiverObjectId],
+                  receiverNumber: actualReceiverNumber || null,
+                },
+              ],
               { session }
             );
             console.log(
@@ -243,7 +280,54 @@ function initChatSocket(io) {
 
         // --- GIFT CREATION ---
         // actualReceiverId is always set now (either User._id or UserWithNoAccount._id)
-        const isSelfGift = giftData.isSelfGift || false;
+        // Determine self-gift on the server instead of trusting client-provided flag
+        const isSelfGift = String(senderId) === String(actualReceiverId);
+
+        // Generate unique Bahumati transaction ID
+        const generateUniqueTransactionId = async () => {
+          const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+          let isUnique = false;
+          let transactionId;
+          let attempts = 0;
+          const maxAttempts = 10;
+
+          while (!isUnique && attempts < maxAttempts) {
+            // Use timestamp (last 8 chars of timestamp in base36) + random chars for uniqueness
+            const timestamp = Date.now().toString(36).toUpperCase().slice(-8);
+            let randomPart = "";
+            for (let i = 0; i < 6; i++) {
+              randomPart += chars.charAt(
+                Math.floor(Math.random() * chars.length)
+              );
+            }
+            transactionId = `BAHU${timestamp}${randomPart}`;
+
+            // Check if this transaction ID already exists
+            const existingGift = await Gift.findOne({
+              transactionId: transactionId,
+            }).session(session);
+            if (!existingGift) {
+              isUnique = true;
+            }
+            attempts++;
+          }
+
+          if (!isUnique) {
+            // Fallback: use full timestamp + random if we couldn't find unique in max attempts
+            const timestamp = Date.now().toString(36).toUpperCase();
+            let randomPart = "";
+            for (let i = 0; i < 12; i++) {
+              randomPart += chars.charAt(
+                Math.floor(Math.random() * chars.length)
+              );
+            }
+            transactionId = `BAHU${timestamp}${randomPart}`;
+          }
+
+          return transactionId;
+        };
+        const transactionId = await generateUniqueTransactionId();
+
         const [giftRecord] = await Gift.create(
           [
             {
@@ -262,6 +346,7 @@ function initChatSocket(io) {
               note: giftData.note || null,
               conversationId: conversation?._id || null,
               isSelfGift: isSelfGift,
+              transactionId: transactionId,
             },
           ],
           { session }
@@ -269,49 +354,79 @@ function initChatSocket(io) {
 
         // --- AUTO-ALLOT SELF GIFTS ---
         // If this is a self gift, automatically allot it with the same type
+        // Note: Money will be added to UserHistory first, then allocated
         if (isSelfGift && String(senderId) === String(actualReceiverId)) {
-          try {
-            const allocationType = giftRecord.type; // Allocate as the same type (gold or stock)
-            await allocateGift({
-              giftId: giftRecord._id,
-              userId: String(actualReceiverId),
-              allocationType: allocationType,
-              session: session,
-            });
-            console.log(
-              `✅ Auto-allotted self gift ${giftRecord._id} as ${allocationType}`
-            );
-          } catch (allocationError) {
-            console.error(
-              `❌ Error auto-allotting self gift: ${allocationError.message}`
-            );
-            // Don't fail the gift creation if auto-allocation fails
-            // The gift will remain unallotted and can be manually allotted later
-          }
+          // Self gifts will be auto-allotted after money is added to UserHistory
+          // This happens outside the transaction
         }
 
         // --- Commit ---
         await session.commitTransaction();
 
-        // Send push notification for gift (without message)
-        // Always send push notification (even if user is online)
-        // This ensures users get notified even if they're not on the chat screen
+        // Handle gift money allocation (for registered users only)
+        // Do this outside transaction to avoid long-running transactions
         try {
-          const sender = await User.findById(senderId).select("fullName image");
-          let receiver = null;
+          // Check if receiver is a registered User (not UserWithNoAccount)
+          const isUserWithNoAccount = await UserWithNoAccount.findById(
+            actualReceiverId
+          );
 
-          if (actualReceiverId) {
-            receiver = await User.findById(actualReceiverId).select(
-              "fcmToken fullName image"
-            );
-          } else if (actualReceiverNumber) {
-            // Try to find user by phone number (even if inactive, they might have FCM token)
-            receiver = await User.findOne({
-              number: actualReceiverNumber,
-            }).select("fcmToken fullName image");
+          if (!isUserWithNoAccount) {
+            // Check if this is a self-gift
+            if (isSelfGift && String(senderId) === String(actualReceiverId)) {
+              // For self-gifts: directly allocate to chosen type, skip unallotted money
+              try {
+                const allocationType = giftRecord.type; // Allocate as the same type (gold or stock)
+
+                // First, add to UserHistory (but we'll allocate immediately, so it won't stay unallotted)
+                await addGiftToUserHistory({
+                  giftId: giftRecord._id,
+                  userId: actualReceiverId,
+                  amount: giftRecord.valueInINR,
+                  senderId: senderId,
+                });
+
+                // Immediately allocate the full amount to the chosen type
+                await allocateGift({
+                  giftId: String(giftRecord._id), // Convert ObjectId to string
+                  userId: String(actualReceiverId),
+                  allocationType: allocationType,
+                  amount: giftRecord.valueInINR, // Allocate full amount
+                });
+                console.log(
+                  `✅ Directly allocated self gift ₹${giftRecord.valueInINR} as ${allocationType} (skipped unallotted)`
+                );
+              } catch (allocationError) {
+                console.error(
+                  `❌ Error auto-allotting self gift: ${allocationError.message}`
+                );
+                // Don't fail gift creation if auto-allocation fails
+              }
+            } else {
+              // For regular gifts: add to unallotted money
+              await addGiftToUserHistory({
+                giftId: giftRecord._id,
+                userId: actualReceiverId,
+                amount: giftRecord.valueInINR,
+                senderId: senderId,
+              });
+              console.log(
+                `✅ Added ₹${giftRecord.valueInINR} to user ${actualReceiverId}'s unallotted money`
+              );
+            }
           }
+        } catch (historyError) {
+          console.error(
+            "Error adding gift to user history:",
+            historyError.message
+          );
+          // Don't fail gift creation if history update fails
+        }
 
-          // Check if actualReceiverId is a User (registered) or UserWithNoAccount (non-registered)
+        // Do NOT send push notification for gift creation
+        // Notifications will only be sent when a message is sent with the gift
+        // Update UserWithNoAccount if receiver is non-registered
+        try {
           const isUserWithNoAccount = await UserWithNoAccount.findById(
             actualReceiverId
           );
@@ -335,31 +450,51 @@ function initChatSocket(io) {
                 saveError.message
               );
             }
-            // No FCM notification for non-registered users (no FCM token)
-            console.log(
-              `ℹ️ Gift created for non-registered user (phone: ${isUserWithNoAccount.phoneNumber}), no FCM notification sent`
-            );
-          } else {
-            // Receiver is a registered User - try to send FCM notification
-            if (receiver?.fcmToken) {
-              await sendGiftNotification(receiver.fcmToken, giftRecord, sender);
+          } else if (!isSelfGift) {
+            try {
+              await scheduleAutoAllocationTask({
+                giftId: giftRecord._id,
+                userId: actualReceiverId,
+              });
               console.log(
-                `📱 Push notification sent for gift to ${actualReceiverId}`
+                `⏰ Scheduled auto-allocation for gift ${giftRecord._id}`
               );
-            } else {
-              console.log(
-                `ℹ️ No FCM token found for registered user ${actualReceiverId}`
+            } catch (taskError) {
+              console.error(
+                "Error scheduling auto-allocation task:",
+                taskError.message
               );
             }
           }
-        } catch (notifError) {
-          console.error(
-            "Error sending push notification for gift:",
-            notifError.message
-          );
-          // Don't fail the gift creation if notification fails
+        } catch (error) {
+          console.error("Error updating UserWithNoAccount:", error.message);
+          // Don't fail the gift creation if this fails
         }
+        if (conversation) {
+          const updatedConversation = {
+            _id: conversation._id,
+            participants: conversation.participants,
+            lastMessage: conversation.lastMessage,
+            lastMessageType: conversation.lastMessageType,
+            updatedAt: conversation.updatedAt,
+            unreadCounts: conversation.unreadCounts,
+            // Include receiverNumber for phone-number (non-registered) conversations
+            receiverNumber:
+              actualReceiverNumber || conversation.receiverNumber || null,
+          };
 
+          // Send to receiver (if different from sender)
+          if (String(actualReceiverId) !== String(senderId)) {
+            io.to(actualReceiverId).emit("conversationUpdated", {
+              conversation: updatedConversation,
+            });
+          }
+
+          // Send to sender
+          socket.emit("conversationUpdated", {
+            conversation: updatedConversation,
+          });
+        }
         // Return gift data to sender
         if (callback) {
           callback({
@@ -468,6 +603,8 @@ function initChatSocket(io) {
               userByNumber._id instanceof mongoose.Types.ObjectId
                 ? userByNumber._id
                 : new mongoose.Types.ObjectId(userByNumber._id);
+            // Clear receiverNumber because this is a registered user
+            actualReceiverNumber = null;
             console.log(
               `✅ [sendMessage] Found registered user: ${actualReceiverId}`
             );
@@ -552,7 +689,12 @@ function initChatSocket(io) {
               `🆕 [sendMessage] Creating new conversation with participants: [${senderObjectId}, ${receiverObjectId}]`
             );
             [conversation] = await Conversation.create(
-              [{ participants: [senderObjectId, receiverObjectId] }],
+              [
+                {
+                  participants: [senderObjectId, receiverObjectId],
+                  receiverNumber: actualReceiverNumber || null,
+                },
+              ],
               { session } // Pass session
             );
             console.log(
@@ -569,9 +711,56 @@ function initChatSocket(io) {
         // --- HANDLE GIFT CREATION IF GIFT DATA PROVIDED (Single Call) ---
         // actualReceiverId is always set now (either User._id or UserWithNoAccount._id)
         let giftRecord = null;
+        let isSelfGift = false;
         if (gift) {
-          // Create new gift from provided data
-          const isSelfGift = gift.isSelfGift || false;
+          // Determine self-gift server-side, do not rely on client
+          isSelfGift = String(senderId) === String(actualReceiverId);
+
+          // Generate unique Bahumati transaction ID
+          const generateUniqueTransactionId = async () => {
+            const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+            let isUnique = false;
+            let transactionId;
+            let attempts = 0;
+            const maxAttempts = 10;
+
+            while (!isUnique && attempts < maxAttempts) {
+              // Use timestamp (last 8 chars of timestamp in base36) + random chars for uniqueness
+              const timestamp = Date.now().toString(36).toUpperCase().slice(-8);
+              let randomPart = "";
+              for (let i = 0; i < 6; i++) {
+                randomPart += chars.charAt(
+                  Math.floor(Math.random() * chars.length)
+                );
+              }
+              transactionId = `BAHU${timestamp}${randomPart}`;
+
+              // Check if this transaction ID already exists
+              const existingGift = await Gift.findOne({
+                transactionId: transactionId,
+              }).session(session);
+              if (!existingGift) {
+                isUnique = true;
+              }
+              attempts++;
+            }
+
+            if (!isUnique) {
+              // Fallback: use full timestamp + random if we couldn't find unique in max attempts
+              const timestamp = Date.now().toString(36).toUpperCase();
+              let randomPart = "";
+              for (let i = 0; i < 12; i++) {
+                randomPart += chars.charAt(
+                  Math.floor(Math.random() * chars.length)
+                );
+              }
+              transactionId = `BAHU${timestamp}${randomPart}`;
+            }
+
+            return transactionId;
+          };
+          const transactionId = await generateUniqueTransactionId();
+
           [giftRecord] = await Gift.create(
             [
               {
@@ -590,33 +779,14 @@ function initChatSocket(io) {
                 note: gift.note || null,
                 conversationId: conversation?._id || null,
                 isSelfGift: isSelfGift,
+                transactionId: transactionId,
               },
             ],
             { session } // Pass session
           );
 
-          // --- AUTO-ALLOT SELF GIFTS ---
-          // If this is a self gift, automatically allot it with the same type
-          if (isSelfGift && String(senderId) === String(actualReceiverId)) {
-            try {
-              const allocationType = giftRecord.type; // Allocate as the same type (gold or stock)
-              await allocateGift({
-                giftId: giftRecord._id,
-                userId: String(actualReceiverId),
-                allocationType: allocationType,
-                session: session,
-              });
-              console.log(
-                `✅ Auto-allotted self gift ${giftRecord._id} as ${allocationType}`
-              );
-            } catch (allocationError) {
-              console.error(
-                `❌ Error auto-allotting self gift: ${allocationError.message}`
-              );
-              // Don't fail the gift creation if auto-allocation fails
-              // The gift will remain unallotted and can be manually allotted later
-            }
-          }
+          // Note: Self gifts will be auto-allotted after money is added to UserHistory
+          // This happens outside the transaction
         } else if (giftId) {
           // --- VALIDATE EXISTING GIFT (Two-Step Call) ---
           giftRecord = await Gift.findOne({
@@ -684,6 +854,8 @@ function initChatSocket(io) {
 
         // --- MESSAGE CREATION (only if conversation exists) ---
         let newMessage = null;
+        const receiverNumberForMessage =
+          actualReceiverNumber || conversation?.receiverNumber || null;
         if (conversation) {
           [newMessage] = await Message.create(
             [
@@ -691,6 +863,7 @@ function initChatSocket(io) {
                 conversationId: conversation._id,
                 senderId,
                 receiverId: actualReceiverId,
+                receiverNumber: receiverNumberForMessage,
                 type: giftRecord || giftId ? "giftWithMessage" : type,
                 content:
                   type === "text" && content ? encrypt(content) : content,
@@ -715,6 +888,57 @@ function initChatSocket(io) {
         // *** COMMIT THE TRANSACTION ***
         await session.commitTransaction();
 
+        // Add gift money to user's unallotted money (for registered users only)
+        // Do this outside transaction to avoid long-running transactions
+        if (giftRecord) {
+          try {
+            // Check if receiver is a registered User (not UserWithNoAccount)
+            const isUserWithNoAccount = await UserWithNoAccount.findById(
+              actualReceiverId
+            );
+
+            if (!isUserWithNoAccount) {
+              // Receiver is a registered user - add to UserHistory
+              await addGiftToUserHistory({
+                giftId: giftRecord._id,
+                userId: actualReceiverId,
+                amount: giftRecord.valueInINR,
+                senderId: senderId,
+              });
+              console.log(
+                `✅ Added ₹${giftRecord.valueInINR} to user ${actualReceiverId}'s unallotted money`
+              );
+
+              // Auto-allot self gifts immediately after adding to UserHistory
+              if (isSelfGift && String(senderId) === String(actualReceiverId)) {
+                try {
+                  const allocationType = giftRecord.type; // Allocate as the same type (gold or stock)
+                  await allocateGift({
+                    giftId: giftRecord._id,
+                    userId: String(actualReceiverId),
+                    allocationType: allocationType,
+                    amount: giftRecord.valueInINR, // Allocate full amount
+                  });
+                  console.log(
+                    `✅ Auto-allotted self gift ${giftRecord._id} as ${allocationType}`
+                  );
+                } catch (allocationError) {
+                  console.error(
+                    `❌ Error auto-allotting self gift: ${allocationError.message}`
+                  );
+                  // Don't fail if auto-allocation fails
+                }
+              }
+            }
+          } catch (historyError) {
+            console.error(
+              "Error adding gift to user history:",
+              historyError.message
+            );
+            // Don't fail if history update fails
+          }
+        }
+
         // --- EMIT SOCKET EVENTS (Only if transaction was successful and conversation exists) ---
         if (conversation && newMessage) {
           const unencryptedMessageForSocket = {
@@ -722,32 +946,73 @@ function initChatSocket(io) {
             content: content, // Send unencrypted content back to clients
             gift: giftRecord ? giftRecord.toObject() : undefined,
             // Include receiverNumber if it's a UserWithNoAccount (for frontend matching)
-            receiverNumber: actualReceiverNumber || undefined,
+            receiverNumber: receiverNumberForMessage || undefined,
           };
 
           if (giftRecord) {
             // Combined gift+message events
+            // Build a conversation payload for socket that includes receiverNumber
+            const conversationForSocket =
+              typeof conversation.toObject === "function"
+                ? { ...conversation.toObject() }
+                : { ...conversation };
+            conversationForSocket.receiverNumber =
+              actualReceiverNumber || conversation.receiverNumber || null;
+
             io.to(actualReceiverId).emit("receiveGiftWithMessage", {
               message: unencryptedMessageForSocket,
               gift: giftRecord,
-              conversation,
+              conversation: conversationForSocket,
             });
             socket.emit("giftWithMessageSent", {
               message: unencryptedMessageForSocket,
               gift: giftRecord,
-              conversation,
+              conversation: conversationForSocket,
             });
           } else {
             // Regular message events
+            const conversationForSocket =
+              typeof conversation.toObject === "function"
+                ? { ...conversation.toObject() }
+                : { ...conversation };
+            conversationForSocket.receiverNumber =
+              actualReceiverNumber || conversation.receiverNumber || null;
+
             io.to(actualReceiverId).emit("receiveMessage", {
               message: unencryptedMessageForSocket,
-              conversation,
+              conversation: conversationForSocket,
             });
             socket.emit("receiveMessage", {
               message: unencryptedMessageForSocket,
-              conversation,
+              conversation: conversationForSocket,
             });
           }
+
+          // *** ADD THESE NEW CONVERSATION UPDATE EVENTS ***
+          // Emit conversation updates to both sender and receiver
+          const updatedConversation = {
+            _id: conversation._id,
+            participants: conversation.participants,
+            lastMessage: conversation.lastMessage,
+            lastMessageType: conversation.lastMessageType,
+            updatedAt: conversation.updatedAt,
+            unreadCounts: conversation.unreadCounts,
+            // Include receiverNumber so frontend can recognize phone-number conversations
+            receiverNumber:
+              actualReceiverNumber || conversation.receiverNumber || null,
+          };
+
+          // Send to receiver (if different from sender)
+          if (String(actualReceiverId) !== String(senderId)) {
+            io.to(actualReceiverId).emit("conversationUpdated", {
+              conversation: updatedConversation,
+            });
+          }
+
+          // Send to sender
+          socket.emit("conversationUpdated", {
+            conversation: updatedConversation,
+          });
         }
 
         // --- SEND PUSH NOTIFICATIONS ---
@@ -816,6 +1081,24 @@ function initChatSocket(io) {
               `ℹ️ Gift/message created for non-registered user (phone: ${isUserWithNoAccount.phoneNumber}), no FCM notification sent`
             );
           } else {
+            // Schedule auto-allocation task for registered users when applicable
+            if (giftRecord && !isSelfGift) {
+              try {
+                await scheduleAutoAllocationTask({
+                  giftId: giftRecord._id,
+                  userId: actualReceiverId,
+                });
+                console.log(
+                  `⏰ Scheduled auto-allocation for gift ${giftRecord._id}`
+                );
+              } catch (taskError) {
+                console.error(
+                  "Error scheduling auto-allocation task:",
+                  taskError.message
+                );
+              }
+            }
+
             // Receiver is a registered User - try to send FCM notification
             if (receiver?.fcmToken) {
               // If gift was just created in this transaction AND message was created,

@@ -5,8 +5,11 @@ const { isAuthorized } = require("../middlewares/auth");
 // All routes require authentication
 router.use(isAuthorized);
 
-// Allocate/Convert a gift to gold or top 50 stocks
+// Allocate money from user's unallotted money to gold or stock
 router.route("/:giftId/allocate").post(giftController.allocateGift);
+
+// Get user's allocation summary
+router.route("/allocation-summary").get(giftController.getAllocationSummary);
 
 // Accept a gift (mark as accepted)
 router.route("/:giftId/accept").patch(giftController.acceptGift);

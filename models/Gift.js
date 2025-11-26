@@ -40,6 +40,28 @@ const giftSchema = new mongoose.Schema(
     convertedTo: { type: String, enum: ["gold", "stock", null], default: null },
     hiddenFromSender: { type: Boolean, default: false },
 
+    // Partial allocation support
+    remainingUnallocatedAmount: { type: Number, default: null }, // Amount not yet allocated
+    allocationHistory: [
+      {
+        amount: { type: Number, required: true }, // Amount allocated in this allocation
+        allocationType: {
+          type: String,
+          enum: ["gold", "stock"],
+          required: true,
+        },
+        quantity: { type: Number, required: true }, // Quantity allocated
+        pricePerUnit: { type: Number, required: true }, // Price at allocation time
+        allocatedAt: { type: Date, default: Date.now },
+        conversionDetails: {
+          fromType: { type: String, enum: ["gold", "stock"] },
+          toType: { type: String, enum: ["gold", "stock"] },
+          conversionRate: { type: Number },
+          convertedQuantity: { type: Number },
+        },
+      },
+    ],
+
     conversionDetails: {
       fromType: { type: String, enum: ["gold", "stock"] },
       toType: { type: String, enum: ["gold", "stock"] },
@@ -48,6 +70,12 @@ const giftSchema = new mongoose.Schema(
     },
 
     transactionRef: { type: String, default: null },
+    transactionId: {
+      type: String,
+      default: null,
+      unique: true,
+      sparse: true, // Allows multiple null values but unique if value is present
+    }, // Bahumati transaction ID
     provider: {
       type: String,
       enum: ["Augmont", "Zerodha", "Groww", "Kuvera", null],

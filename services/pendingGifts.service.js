@@ -10,6 +10,7 @@ const {
   sendMessageNotification,
 } = require("./fcm.service");
 const { encrypt } = require("../utils/crypto.util");
+const { addGiftToUserHistory } = require("./giftAllocation.service");
 
 /**
  * Process pending gifts and messages for a newly registered user
@@ -22,6 +23,7 @@ const processPendingGiftsForUser = async (userId, phoneNumber) => {
   session.startTransaction();
 
   try {
+    const giftsToCredit = [];
     // Normalize phone number
     const normalizePhoneNumber = (rawNumber) => {
       if (!rawNumber) return null;
@@ -89,6 +91,10 @@ const processPendingGiftsForUser = async (userId, phoneNumber) => {
       );
       if (participantIndex !== -1) {
         conversation.participants[participantIndex] = userId;
+        // Clear legacy receiverNumber field now that user has an account
+        if (conversation.receiverNumber) {
+          conversation.receiverNumber = null;
+        }
 
         // Update unreadCounts - move from UserWithNoAccount._id to real user._id
         const unreadCount =
@@ -109,6 +115,8 @@ const processPendingGiftsForUser = async (userId, phoneNumber) => {
     // Use the gifts/messages from userWithNoAccount to know which ones to process
     const processedGifts = [];
     const processedMessages = [];
+    const receiverNumberForMessages =
+      userWithNoAccount?.phoneNumber || normalizedNumber;
 
     // Process each gift from UserWithNoAccount
     for (const giftEntry of userWithNoAccount.gifts) {
@@ -174,6 +182,7 @@ const processPendingGiftsForUser = async (userId, phoneNumber) => {
                     conversationId: conversation._id,
                     senderId: giftSenderId,
                     receiverId: userId,
+                    receiverNumber: receiverNumberForMessages,
                     type: messageEntry.type || "text",
                     content:
                       messageEntry.type === "text" && messageEntry.content
@@ -211,6 +220,12 @@ const processPendingGiftsForUser = async (userId, phoneNumber) => {
         processedGifts.push({
           gift,
           message: associatedMessage,
+          senderId: giftSenderId,
+        });
+        giftsToCredit.push({
+          giftId: gift._id,
+          amount:
+            gift.valueInINR ?? gift.amount ?? gift.pricePerUnitAtGift ?? 0,
           senderId: giftSenderId,
         });
 
@@ -268,6 +283,7 @@ const processPendingGiftsForUser = async (userId, phoneNumber) => {
                 conversationId: conversation._id,
                 senderId: messageSenderId,
                 receiverId: userId,
+                receiverNumber: receiverNumberForMessages,
                 type: messageEntry.type || "text",
                 content:
                   messageEntry.type === "text" && messageEntry.content
@@ -300,6 +316,29 @@ const processPendingGiftsForUser = async (userId, phoneNumber) => {
 
     // Commit transaction
     await session.commitTransaction();
+
+    // After migration completes, add gifts to the user's unallotted balance
+    for (const giftInfo of giftsToCredit) {
+      try {
+        const amountValue =
+          typeof giftInfo.amount === "number" && !Number.isNaN(giftInfo.amount)
+            ? giftInfo.amount
+            : 0;
+        await addGiftToUserHistory({
+          giftId: giftInfo.giftId,
+          userId,
+          amount: amountValue,
+          senderId: giftInfo.senderId,
+        });
+        console.log(
+          `💰 Added ₹${amountValue} from gift ${giftInfo.giftId} to user ${userId}'s history`
+        );
+      } catch (historyError) {
+        console.error(
+          `❌ Failed to add gift ${giftInfo.giftId} to user history: ${historyError.message}`
+        );
+      }
+    }
 
     // Send notifications for all processed gifts (outside transaction)
     const sender = await User.findById(userId).select(

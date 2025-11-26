@@ -10,7 +10,15 @@ const notificationSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ["message", "gift", "giftWithMessage", "transaction", "system"],
+      enum: [
+        "message",
+        "gift",
+        "giftWithMessage",
+        "selfGift",
+        "selfGiftWithMessage",
+        "transaction",
+        "system",
+      ],
       required: true,
     },
     title: {

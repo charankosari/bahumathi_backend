@@ -2,7 +2,9 @@ const axios = require("axios");
 const { decrypt } = require("../utils/crypto.util"); // ✨ IMPORT
 const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
+const Gift = require("../models/Gift");
 const UserWithNoAccount = require("../models/UserWithNoAccount");
+const User = require("../models/user.model");
 const mongoose = require("mongoose");
 
 const UPLOADS_SERVICE_BASE = "http://localhost:4000";
@@ -34,9 +36,35 @@ exports.getConversations = async (req, res, next) => {
       .populate("senderId", "fullName image number")
       .sort({ updatedAt: -1 });
 
+    // Filter out self-gift conversations (where both participants are the same user)
+    const filteredConversations = conversations.filter((convo) => {
+      const convoObj = convo.toObject();
+
+      // If this conversation is for a phone-number (no-account) recipient, keep it
+      if (convoObj.receiverNumber) {
+        return true;
+      }
+
+      // If it's a conversation with participants array
+      if (convoObj.participants && convoObj.participants.length > 0) {
+        // Check if all participants are the same user (self-conversation)
+        const uniqueParticipantIds = [
+          ...new Set(
+            convoObj.participants.map((p) => p._id || p).filter(Boolean)
+          ),
+        ];
+        if (uniqueParticipantIds.length === 1) {
+          console.log(`🚫 Filtering out self-conversation: ${convoObj._id}`);
+          return false; // Filter out self-conversations
+        }
+      }
+
+      return true; // Keep regular conversations
+    });
+
     // Decrypt + add presigned media if needed
     const decryptedConversations = await Promise.all(
-      conversations.map(async (convo) => {
+      filteredConversations.map(async (convo) => {
         const convoObject = convo.toObject();
 
         // Text message decryption
@@ -81,7 +109,11 @@ exports.getMessagesForConversation = async (req, res, next) => {
 
     // Security check: ensure user is a participant
     const conversation = await Conversation.findById(conversationId);
-    if (!conversation || !conversation.participants.includes(userId)) {
+    const participantIds = conversation
+      ? conversation.participants.map((p) => p.toString())
+      : [];
+
+    if (!conversation || !participantIds.includes(userId.toString())) {
       return res.status(403).json({
         message: "Forbidden: You are not a participant in this conversation.",
       });
@@ -97,9 +129,68 @@ exports.getMessagesForConversation = async (req, res, next) => {
       .skip(skip)
       .limit(limit);
 
+    // Filter out self-gift messages
+    // First, collect all giftIds that need to be checked
+    const giftIdsToCheck = [];
+    messages.forEach((msg) => {
+      const msgObj = msg.toObject();
+      if (msgObj.giftId) {
+        const gift = msgObj.giftId;
+        // If gift is not populated (just an ObjectId), we need to fetch it
+        if (typeof gift === "object" && gift._id) {
+          giftIdsToCheck.push(gift._id.toString());
+        } else if (mongoose.Types.ObjectId.isValid(gift)) {
+          giftIdsToCheck.push(gift.toString());
+        }
+      }
+    });
+
+    // Fetch all gifts in one query to check isSelfGift
+    const giftsMap = new Map();
+    if (giftIdsToCheck.length > 0) {
+      const gifts = await Gift.find({
+        _id: { $in: giftIdsToCheck },
+      }).select("_id isSelfGift");
+      gifts.forEach((gift) => {
+        giftsMap.set(gift._id.toString(), gift.isSelfGift);
+      });
+    }
+
+    // Filter out self-gift messages
+    const filteredMessages = messages.filter((msg) => {
+      const msgObj = msg.toObject();
+      // Check if message has a gift and if it's a self-gift
+      if (msgObj.giftId) {
+        const gift = msgObj.giftId;
+        let isSelfGift = false;
+
+        // Check if gift is populated (object with properties)
+        if (gift && typeof gift === "object" && gift._id) {
+          isSelfGift = gift.isSelfGift === true;
+          // Also check in the map (in case populate didn't include isSelfGift)
+          if (!isSelfGift && giftsMap.has(gift._id.toString())) {
+            isSelfGift = giftsMap.get(gift._id.toString()) === true;
+          }
+        } else if (mongoose.Types.ObjectId.isValid(gift)) {
+          // Gift is just an ObjectId, check in map
+          isSelfGift = giftsMap.get(gift.toString()) === true;
+        }
+
+        if (isSelfGift) {
+          console.log(
+            `🚫 [getMessagesForConversation] Filtering out self-gift message: ${
+              msgObj._id
+            }, giftId: ${gift._id || gift}`
+          );
+          return false; // Filter out self-gift messages
+        }
+      }
+      return true; // Keep all other messages
+    });
+
     // Decrypt + attach presigned media URLs
     const decryptedMessages = await Promise.all(
-      messages.map(async (msg) => {
+      filteredMessages.map(async (msg) => {
         const messageObject = msg.toObject();
 
         // decrypt text messages
@@ -164,6 +255,7 @@ exports.getMessagesByUserId = async (req, res, next) => {
 
     // Determine actual peer ID - could be ObjectId or phone number
     let actualPeerId = peerId;
+    let normalizedNumberForPeer = null;
 
     // Check if peerId is a phone number (10 digits) or ObjectId (24 hex chars)
     const isPhoneNumber = /^\d{10}$/.test(peerId);
@@ -172,23 +264,33 @@ exports.getMessagesByUserId = async (req, res, next) => {
       /^[0-9a-fA-F]{24}$/.test(peerId);
 
     if (isPhoneNumber && !isObjectId) {
-      // peerId is a phone number - find UserWithNoAccount
-      const normalizedNumber = normalizePhoneNumber(peerId);
-      if (normalizedNumber) {
+      // peerId is a phone number - find UserWithNoAccount or newly registered user
+      normalizedNumberForPeer = normalizePhoneNumber(peerId);
+      if (normalizedNumberForPeer) {
         const userWithNoAccount = await UserWithNoAccount.findOne({
-          phoneNumber: normalizedNumber,
+          phoneNumber: normalizedNumberForPeer,
         });
         if (userWithNoAccount) {
           actualPeerId = userWithNoAccount._id.toString();
           console.log(
-            `📞 [getMessagesByUserId] Found UserWithNoAccount ${actualPeerId} for phone ${normalizedNumber}`
+            `📞 [getMessagesByUserId] Found UserWithNoAccount ${actualPeerId} for phone ${normalizedNumberForPeer}`
           );
         } else {
-          // No UserWithNoAccount found - return empty messages
-          return res.status(200).json({
-            success: true,
-            messages: [],
-          });
+          const registeredUser = await User.findOne({
+            number: normalizedNumberForPeer,
+          }).select("_id number");
+          if (registeredUser) {
+            actualPeerId = registeredUser._id.toString();
+            console.log(
+              `✅ [getMessagesByUserId] Found registered user ${actualPeerId} for phone ${normalizedNumberForPeer}`
+            );
+          } else {
+            // No user of any kind for the phone number
+            return res.status(200).json({
+              success: true,
+              messages: [],
+            });
+          }
         }
       }
     } else if (!isObjectId) {
@@ -223,9 +325,68 @@ exports.getMessagesByUserId = async (req, res, next) => {
       .skip(skip)
       .limit(limit);
 
+    // Filter out self-gift messages
+    // First, collect all giftIds that need to be checked
+    const giftIdsToCheck = [];
+    messages.forEach((msg) => {
+      const msgObj = msg.toObject();
+      if (msgObj.giftId) {
+        const gift = msgObj.giftId;
+        // If gift is not populated (just an ObjectId), we need to fetch it
+        if (typeof gift === "object" && gift._id) {
+          giftIdsToCheck.push(gift._id.toString());
+        } else if (mongoose.Types.ObjectId.isValid(gift)) {
+          giftIdsToCheck.push(gift.toString());
+        }
+      }
+    });
+
+    // Fetch all gifts in one query to check isSelfGift
+    const giftsMap = new Map();
+    if (giftIdsToCheck.length > 0) {
+      const gifts = await Gift.find({
+        _id: { $in: giftIdsToCheck },
+      }).select("_id isSelfGift");
+      gifts.forEach((gift) => {
+        giftsMap.set(gift._id.toString(), gift.isSelfGift);
+      });
+    }
+
+    // Filter out self-gift messages
+    const filteredMessages = messages.filter((msg) => {
+      const msgObj = msg.toObject();
+      // Check if message has a gift and if it's a self-gift
+      if (msgObj.giftId) {
+        const gift = msgObj.giftId;
+        let isSelfGift = false;
+
+        // Check if gift is populated (object with properties)
+        if (gift && typeof gift === "object" && gift._id) {
+          isSelfGift = gift.isSelfGift === true;
+          // Also check in the map (in case populate didn't include isSelfGift)
+          if (!isSelfGift && giftsMap.has(gift._id.toString())) {
+            isSelfGift = giftsMap.get(gift._id.toString()) === true;
+          }
+        } else if (mongoose.Types.ObjectId.isValid(gift)) {
+          // Gift is just an ObjectId, check in map
+          isSelfGift = giftsMap.get(gift.toString()) === true;
+        }
+
+        if (isSelfGift) {
+          console.log(
+            `🚫 [getMessagesByUserId] Filtering out self-gift message: ${
+              msgObj._id
+            }, giftId: ${gift._id || gift}`
+          );
+          return false; // Filter out self-gift messages
+        }
+      }
+      return true; // Keep all other messages
+    });
+
     // Decrypt + attach presigned media URLs
     const decryptedMessages = await Promise.all(
-      messages.map(async (msg) => {
+      filteredMessages.map(async (msg) => {
         const messageObject = msg.toObject();
 
         // decrypt text messages

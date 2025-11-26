@@ -3,10 +3,10 @@ const mongoose = require("mongoose");
 const conversationSchema = new mongoose.Schema(
   {
     participants: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
-    // For conversations with non-registered users
+    // For conversations with non-registered users: store receiver phone (last 10 digits)
     receiverNumber: {
       type: String,
-      required: false,
+      default: null,
       index: true,
     },
     senderId: {
@@ -15,7 +15,7 @@ const conversationSchema = new mongoose.Schema(
       required: false,
     },
 
-    // CHANGE THIS SECTION
+    // Last message info
     lastMessage: {
       text: String,
       sender: { type: mongoose.Schema.Types.ObjectId, ref: "User" },

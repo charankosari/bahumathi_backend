@@ -2,15 +2,12 @@ const mongoose = require("mongoose");
 const User = require("../models/user.model");
 const asyncHandler = require("../middlewares/asyncHandler");
 const sendJwtToken = require("../utils/sendJwtToken");
-const { OAuth2Client } = require("google-auth-library");
 const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const sendOtp = require("../libs/sms/sms");
 const Gift = require("../models/Gift");
 const QRCode = require("qrcode");
 const { Uploader } = require("../libs/s3/s3");
-
-const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 const generateOtp = () => {
   return crypto.randomInt(1000, 9999).toString();
@@ -28,7 +25,9 @@ const {
 
 const ensureUserQr = async (user) => {
   if (!user || user.qrCodeUrl) return user;
-  const url = `bahumati://user?id=${user._id}`;
+  // Use HTTPS link for Universal Links / App Links support
+  // Updated to /usergifting path as requested
+  const url = `https://bahumati.in/usergifting?user=${user._id}`;
   const pngBuffer = await QRCode.toBuffer(url, { type: "png", width: 512 });
   const uploader = new Uploader();
   const keyName = `qr_${user._id}.png`;
@@ -38,107 +37,69 @@ const ensureUserQr = async (user) => {
   return user;
 };
 
-// ========== SIGNUP (Number based) ==========
-exports.signup = asyncHandler(async (req, res, next) => {
-  const { fullName, number } = req.body;
+const normalizePhoneNumber = (rawNumber) => {
+  if (rawNumber === null || rawNumber === undefined) return null;
+  const digits = String(rawNumber).replace(/\D/g, "");
+  if (digits.length < 10) return null;
+  return digits.slice(-10);
+};
 
-  if (!fullName) {
-    const err = new Error("Full name is required");
+const startOtpFlowForNumber = async ({ number, fullName }) => {
+  const normalizedNumber = normalizePhoneNumber(number);
+  if (!normalizedNumber) {
+    const err = new Error("A valid 10-digit phone number is required");
     err.statusCode = 400;
-    return next(err);
-  }
-  if (!number) {
-    const err = new Error("Phone number is required");
-    err.statusCode = 400;
-    return next(err);
+    throw err;
   }
 
-  // Check if user already exists
-  let user = await User.findOne({ number });
+  let user = await User.findOne({ number: normalizedNumber });
 
   const otp = generateOtp();
   const hashedOtp = await hashOtp(otp);
   const otpExpires = Date.now() + 10 * 60 * 1000;
 
-  if (user) {
-    if (user.active) {
-      // Active user → block signup
-      const err = new Error(
-        "User with this number already exists. Please login."
-      );
-      err.statusCode = 400;
-      return next(err);
-    } else {
-      // Inactive user → only update OTP + expiry
-      user.otp = hashedOtp;
-      user.otpExpires = otpExpires;
-      await user.save({ validateBeforeSave: false });
-    }
-  } else {
-    // No user → create inactive user
+  if (!user) {
+    const fallbackName = "";
     user = await User.create({
-      fullName,
-      number,
+      fullName: fallbackName,
+      number: normalizedNumber,
       otp: hashedOtp,
       otpExpires,
       active: false,
     });
+  } else {
+    if (fullName && !user.fullName) {
+      user.fullName = fullName.trim();
+    }
+    user.otp = hashedOtp;
+    user.otpExpires = otpExpires;
   }
-  // Generate QR once (if not already present)
+
+  await user.save({ validateBeforeSave: false });
+
   try {
     await ensureUserQr(user);
   } catch (e) {
-    console.error("QR generation failed (signup):", e.message);
-  }
-  // After saving the user (or updating OTP):
-  try {
-    await sendOtp(number, otp); // sends SMS
-  } catch (smsError) {
-    console.error("Failed to send OTP:", smsError.message);
-    // Optional: you can still respond successfully, or return error
+    console.error("QR generation failed (OTP flow):", e.message);
   }
 
-  // Example: await sendOtpSms(number, otp);
-  console.log(`OTP for ${number}: ${otp}`);
-  res.status(200).json({
-    success: true,
-    message: "OTP has been sent. Please verify to continue.",
-  });
-});
+  try {
+    await sendOtp(normalizedNumber, otp);
+  } catch (smsError) {
+    console.error("Failed to send OTP:", smsError.message);
+  }
+
+  console.log(`OTP for ${normalizedNumber}: ${otp}`);
+  return normalizedNumber;
+};
 
 // ========== LOGIN (Number based) ==========
 exports.login = asyncHandler(async (req, res, next) => {
-  const { number } = req.body;
-
-  if (!number) {
-    const err = new Error("Phone number is required");
-    err.statusCode = 400;
-    return next(err);
-  }
-
-  const user = await User.findOne({ number, active: true });
-
-  if (!user) {
-    const err = new Error("User not found. Please sign up.");
-    err.statusCode = 404;
-    return next(err);
-  }
-
-  const otp = generateOtp();
-  user.otp = await hashOtp(otp);
-  user.otpExpires = Date.now() + 10 * 60 * 1000;
-  await user.save({ validateBeforeSave: false });
-  // After saving the user (or updating OTP):
-  try {
-    await sendOtp(number, otp); // sends SMS
-  } catch (smsError) {
-    console.error("Failed to send OTP:", smsError.message);
-    // Optional: you can still respond successfully, or return error
-  }
-
+  const { fullName, number } = req.body;
+  await startOtpFlowForNumber({ number, fullName });
   res.status(200).json({
     success: true,
-    message: "OTP sent successfully. Please verify to log in.",
+    message: "OTP sent successfully. Please verify to continue.",
   });
 });
 
@@ -152,14 +113,15 @@ exports.verifyOtp = asyncHandler(async (req, res, next) => {
     return next(err);
   }
 
-  if (!number) {
-    const err = new Error("Phone number is required");
+  const normalizedNumber = normalizePhoneNumber(number);
+  if (!normalizedNumber) {
+    const err = new Error("A valid 10-digit phone number is required");
     err.statusCode = 400;
     return next(err);
   }
 
   const user = await User.findOne({
-    number,
+    number: normalizedNumber,
     otpExpires: { $gt: Date.now() },
   }).select("+otp");
 
@@ -215,249 +177,6 @@ exports.verifyOtp = asyncHandler(async (req, res, next) => {
   sendJwtToken(user, 200, "Login successful", res);
 });
 
-// ========== GOOGLE SIGNUP / LOGIN ==========
-exports.googleAuth = asyncHandler(async (req, res, next) => {
-  const { token } = req.body;
-
-  if (!token) {
-    const err = new Error("Google token is required");
-    err.statusCode = 400;
-    return next(err);
-  }
-
-  let ticket;
-  try {
-    ticket = await client.verifyIdToken({
-      idToken: token,
-      audience: process.env.GOOGLE_CLIENT_ID,
-    });
-  } catch (error) {
-    const err = new Error("Invalid Google token");
-    err.statusCode = 400;
-    return next(err);
-  }
-
-  const payload = ticket.getPayload();
-  const { email, name, picture } = payload;
-  // Optional fields - available only with proper Google scopes
-  const gender = (
-    payload.gender ||
-    payload.sexe ||
-    payload.given_gender ||
-    payload.genderIdentity ||
-    ""
-  )
-    .toString()
-    .toLowerCase();
-  const birthDate = payload.birthdate || payload.birthday || payload.birthDate;
-  let user = await User.findOne({ email });
-
-  if (!user) {
-    // New user - create inactive account, needs mobile verification
-    const createPayload = {
-      fullName: name,
-      email,
-      image: picture,
-      active: false,
-    };
-    if (gender) createPayload.gender = gender;
-    if (birthDate) createPayload.birthDate = new Date(birthDate);
-    user = await User.create(createPayload);
-    // Generate QR for new Google user
-    try {
-      await ensureUserQr(user);
-    } catch (e) {
-      console.error("QR gen failed (googleAuth create):", e.message);
-    }
-
-    // Don't send JWT token yet - user needs mobile verification
-    res.status(200).json({
-      success: true,
-      login: false,
-      message:
-        "Google authentication successful. Please verify your mobile number to complete registration.",
-      user: {
-        id: user._id,
-        fullName: user.fullName,
-        email: user.email,
-        active: user.active,
-        gender: user.gender,
-        birthDate: user.birthDate,
-      },
-    });
-  } else if (user.active && user.number) {
-    sendJwtToken(user, 200, "Google login successful", res);
-  } else if (!user.active) {
-    // If user exists but inactive, optionally backfill gender/dob if not set
-    let changed = false;
-    if (!user.gender && gender) {
-      user.gender = gender;
-      changed = true;
-    }
-    if (!user.birthDate && birthDate) {
-      user.birthDate = new Date(birthDate);
-      changed = true;
-    }
-    if (changed) await user.save({ validateBeforeSave: false });
-    res.status(200).json({
-      success: true,
-      login: false,
-      message:
-        "Google authentication successful. Please verify your mobile number to complete registration.",
-      user: {
-        id: user._id,
-        fullName: user.fullName,
-        email: user.email,
-        active: user.active,
-        gender: user.gender,
-        birthDate: user.birthDate,
-      },
-    });
-  }
-});
-
-// ========== MOBILE VERIFICATION FOR GOOGLE AUTH ==========
-exports.verifyMobileForGoogleAuth = asyncHandler(async (req, res, next) => {
-  const { email, number } = req.body;
-
-  if (!email) {
-    const err = new Error("Email is required");
-    err.statusCode = 400;
-    return next(err);
-  }
-
-  if (!number) {
-    const err = new Error("Phone number is required");
-    err.statusCode = 400;
-    return next(err);
-  }
-
-  // Check if user exists with this email
-  let user = await User.findOne({ email });
-
-  if (!user) {
-    const err = new Error(
-      "User not found. Please complete Google authentication first."
-    );
-    err.statusCode = 404;
-    return next(err);
-  }
-
-  // Check if mobile number already exists with another user
-  const existingUserWithNumber = await User.findOne({
-    number,
-    _id: { $ne: user._id },
-  });
-
-  if (existingUserWithNumber) {
-    const err = new Error(
-      "This mobile number is already registered with another account. Please use a different number."
-    );
-    err.statusCode = 400;
-    return next(err);
-  }
-
-  // Generate OTP for mobile verification
-  const otp = generateOtp();
-  const hashedOtp = await hashOtp(otp);
-  const otpExpires = Date.now() + 10 * 60 * 1000;
-  console.log("OTP:", otp);
-
-  // Update user with mobile number and OTP
-  user.number = number;
-  user.otp = hashedOtp;
-  user.otpExpires = otpExpires;
-  await user.save({ validateBeforeSave: false });
-
-  // Send OTP via SMS
-  try {
-    await sendOtp(number, otp);
-  } catch (smsError) {
-    console.error("Failed to send OTP:", smsError.message);
-  }
-
-  console.log(`OTP for ${number}: ${otp}`);
-
-  res.status(200).json({
-    success: true,
-    message:
-      "OTP has been sent to your mobile number. Please verify to complete registration.",
-  });
-});
-
-// ========== VERIFY MOBILE OTP FOR GOOGLE AUTH ==========
-exports.verifyMobileOtpForGoogleAuth = asyncHandler(async (req, res, next) => {
-  const { email, number, otp } = req.body;
-
-  if (!email) {
-    const err = new Error("Email is required");
-    err.statusCode = 400;
-    return next(err);
-  }
-
-  if (!number) {
-    const err = new Error("Phone number is required");
-    err.statusCode = 400;
-    return next(err);
-  }
-
-  if (!otp) {
-    const err = new Error("OTP is required");
-    err.statusCode = 400;
-    return next(err);
-  }
-
-  // Find user with email and number
-  const user = await User.findOne({
-    email,
-    number,
-    otpExpires: { $gt: Date.now() },
-  }).select("+otp");
-
-  if (!user) {
-    const err = new Error("Invalid credentials or OTP has expired");
-    err.statusCode = 400;
-    return next(err);
-  }
-
-  const isMatch = await user.compareOtp(otp);
-
-  if (!isMatch) {
-    const err = new Error("Invalid OTP");
-    err.statusCode = 400;
-    return next(err);
-  }
-
-  // Activate user and clear OTP
-  user.active = true;
-  user.otp = undefined;
-  user.otpExpires = undefined;
-  await user.save({ validateBeforeSave: false });
-
-  // Process pending gifts for this user (if any)
-  if (user.number) {
-    try {
-      const result = await processPendingGiftsForUser(user._id, user.number);
-      console.log(
-        `✅ Processed ${result.giftsProcessed} pending gift(s) for user ${user._id}`
-      );
-    } catch (pendingGiftsError) {
-      console.error(
-        "Error processing pending gifts:",
-        pendingGiftsError.message
-      );
-      // Don't fail the registration if pending gifts processing fails
-    }
-  }
-
-  sendJwtToken(
-    user,
-    200,
-    "Mobile verification successful. Registration completed.",
-    res
-  );
-});
-
 exports.getUserDetails = asyncHandler(async (req, res, next) => {
   const userId = req.user.id;
 
@@ -496,16 +215,17 @@ exports.deleteUser = asyncHandler(async (req, res, next) => {
 
 exports.editUser = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
-  const { fullName, email, number, gender, birthDate, image } = req.body;
+  const { fullName, number, gender, birthDate, image, defaultGiftMode } =
+    req.body;
 
   console.log("➡️ editUser called", {
     id,
     fullName,
-    email,
     number,
     gender,
     birthDate,
     image,
+    defaultGiftMode,
   });
 
   const user = await User.findById(id);
@@ -516,18 +236,15 @@ exports.editUser = asyncHandler(async (req, res, next) => {
     return next(err);
   }
 
-  // Update fullName
-  if (fullName) user.fullName = fullName;
-
-  // Add email if it doesn’t exist
-  if (email && !user.email) {
-    const existingEmailUser = await User.findOne({ email });
-    if (existingEmailUser) {
-      const err = new Error("Email already in use by another user");
-      err.statusCode = 400;
-      return next(err);
+  // Update fullName (trim whitespace and save in real-time)
+  if (fullName !== undefined && fullName !== null) {
+    const trimmedName = String(fullName).trim();
+    if (trimmedName.length > 0) {
+      user.fullName = trimmedName;
+    } else {
+      // Allow empty string to clear the name
+      user.fullName = "";
     }
-    user.email = email;
   }
 
   // Add number if it doesn’t exist
@@ -554,12 +271,56 @@ exports.editUser = asyncHandler(async (req, res, next) => {
     user.image = image;
   }
 
+  if (defaultGiftMode) {
+    const normalizedMode = defaultGiftMode.toString().toLowerCase();
+    const allowedModes = ["gold", "stock"];
+    if (!allowedModes.includes(normalizedMode)) {
+      const err = new Error("Invalid default gift mode");
+      err.statusCode = 400;
+      return next(err);
+    }
+    user.defaultGiftMode = normalizedMode;
+  }
+
   await user.save({ validateBeforeSave: false });
-  console.log("✅ User updated", { id: user._id, image: user.image });
+  console.log("✅ User updated", {
+    id: user._id,
+    fullName: user.fullName,
+    image: user.image,
+  });
 
   res.status(200).json({
     success: true,
     message: "User updated successfully",
+    user,
+  });
+});
+
+exports.updateDefaultGiftMode = asyncHandler(async (req, res, next) => {
+  const { mode } = req.body;
+  const normalizedMode = mode ? mode.toString().toLowerCase() : null;
+  const allowedModes = ["gold", "stock"];
+
+  if (!normalizedMode || !allowedModes.includes(normalizedMode)) {
+    const err = new Error("Please choose a valid gift mode (gold or stock)");
+    err.statusCode = 400;
+    return next(err);
+  }
+
+  const user = await User.findById(req.user.id);
+
+  if (!user) {
+    const err = new Error("User not found");
+    err.statusCode = 404;
+    return next(err);
+  }
+
+  user.defaultGiftMode = normalizedMode;
+  await user.save({ validateBeforeSave: false });
+
+  res.status(200).json({
+    success: true,
+    message: "Default gift mode updated",
     user,
   });
 });
@@ -827,7 +588,9 @@ exports.generateUserQr = asyncHandler(async (req, res, next) => {
       return next(err);
     }
 
-    const url = `bahumati://user?id=${user._id}`;
+    // Use HTTPS link for Universal Links / App Links support
+    // Updated to /usergifting path as requested
+    const url = `https://bahumati.in/usergifting?user=${user._id}`;
     const pngBuffer = await QRCode.toBuffer(url, { type: "png", width: 512 });
 
     const uploader = new Uploader();
