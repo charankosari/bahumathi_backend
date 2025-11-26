@@ -144,6 +144,25 @@ const startAutoAllocationCron = () => {
             continue;
           }
 
+          // Check if gift is linked to an event
+          if (gift.eventId) {
+            const Event = require("../models/Event");
+            const event = await Event.findById(gift.eventId);
+
+            if (event) {
+              const allocationStartDate = new Date(event.eventEndDate);
+              allocationStartDate.setDate(allocationStartDate.getDate() + 1); // Allocation starts 1 day after end date
+
+              if (now < allocationStartDate) {
+                await rescheduleTask(
+                  task,
+                  `Event gift. Allocation starts after ${allocationStartDate.toISOString()}.`
+                );
+                continue;
+              }
+            }
+          }
+
           await allocateGift({
             giftId: gift._id.toString(),
             userId: userId,

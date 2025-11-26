@@ -53,15 +53,27 @@ exports.createWithdrawalRequest = asyncHandler(async (req, res, next) => {
     0
   );
 
-  // Calculate maximum withdrawable amount
+  // Check if withdrawal is allowed (must be during event period)
+  const now = new Date();
+  if (now < event.eventStartDate || now > event.eventEndDate) {
+    const err = new Error(
+      "Withdrawals are only allowed during the event period"
+    );
+    err.statusCode = 400;
+    return next(err);
+  }
+
+  // Calculate maximum withdrawable amount (30% of total gifts)
   const maxWithdrawable = (totalAmount * event.withdrawalPercentage) / 100;
 
-  // Get existing pending requests for this event
-  const pendingRequests = await WithdrawalRequest.find({
+  // Get existing pending AND approved requests for this event to calculate total withdrawn/requested
+  // Note: We need to subtract ALL previous requests (pending + approved) to enforce the cumulative limit
+  const allRequests = await WithdrawalRequest.find({
     eventId: event._id,
-    status: "pending",
+    status: { $in: ["pending", "approved"] },
   });
-  const totalPendingAmount = pendingRequests.reduce(
+  
+  const totalWithdrawnOrRequested = allRequests.reduce(
     (sum, req) => sum + req.amount,
     0
   );
@@ -69,7 +81,7 @@ exports.createWithdrawalRequest = asyncHandler(async (req, res, next) => {
   // Calculate available amount
   const availableForWithdrawal = Math.max(
     0,
-    maxWithdrawable - totalPendingAmount
+    maxWithdrawable - totalWithdrawnOrRequested
   );
 
   if (amount > availableForWithdrawal) {
@@ -77,7 +89,7 @@ exports.createWithdrawalRequest = asyncHandler(async (req, res, next) => {
       `Insufficient funds. Maximum withdrawable: ₹${maxWithdrawable.toFixed(
         2
       )}, ` +
-        `Pending requests: ₹${totalPendingAmount.toFixed(2)}, ` +
+        `Already withdrawn/requested: ₹${totalWithdrawnOrRequested.toFixed(2)}, ` +
         `Available: ₹${availableForWithdrawal.toFixed(2)}`
     );
     err.statusCode = 400;
