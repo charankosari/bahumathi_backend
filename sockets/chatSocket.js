@@ -79,6 +79,10 @@ function initChatSocket(io) {
       let receiverId;
       let receiverNumber;
       let giftData;
+      let actualReceiverId = null;
+      let actualReceiverNumber = null;
+      let senderObjectId = null;
+
       try {
         senderId = socket.user.id;
         ({ receiverId, receiverNumber, giftData } = data);
@@ -109,8 +113,7 @@ function initChatSocket(io) {
           return null;
         };
 
-        let actualReceiverId = null;
-        let actualReceiverNumber = receiverNumber
+        actualReceiverNumber = receiverNumber
           ? normalizePhoneNumber(receiverNumber)
           : null;
 
@@ -210,7 +213,7 @@ function initChatSocket(io) {
             `Invalid senderId: "${senderId}" is not a valid ObjectId`
           );
         }
-        const senderObjectId = new mongoose.Types.ObjectId(senderId);
+        senderObjectId = new mongoose.Types.ObjectId(senderId);
         console.log(
           `✅ [sendGift] senderObjectId: ${senderObjectId} (type: ${senderObjectId.constructor.name})`
         );
@@ -583,6 +586,10 @@ function initChatSocket(io) {
       let senderId;
       let receiverId;
       let receiverNumber;
+      let actualReceiverId = null;
+      let actualReceiverNumber = null;
+      let senderObjectId = null;
+
       try {
         senderId = socket.user.id;
         ({ receiverId, receiverNumber, type, content, mediaUrl, giftId, gift } =
@@ -614,8 +621,7 @@ function initChatSocket(io) {
           return null;
         };
 
-        let actualReceiverId = null;
-        let actualReceiverNumber = receiverNumber
+        actualReceiverNumber = receiverNumber
           ? normalizePhoneNumber(receiverNumber)
           : null;
 
@@ -699,7 +705,7 @@ function initChatSocket(io) {
             `Invalid senderId: "${senderId}" is not a valid ObjectId`
           );
         }
-        const senderObjectId = new mongoose.Types.ObjectId(senderId);
+        senderObjectId = new mongoose.Types.ObjectId(senderId);
 
         if (actualReceiverId) {
           // Ensure receiverId is also a valid ObjectId

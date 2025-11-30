@@ -22,6 +22,8 @@ app.use("/api/v1/uploads", require("./routes/upload.routes"));
 app.use("/api/v1/gifts", require("./routes/gift.routes"));
 app.use("/api/v1/events", require("./routes/event.routes"));
 app.use("/api/v1/withdrawals", require("./routes/withdrawal.routes"));
+app.use("/api/v1/kyc", require("./routes/kyc.routes"));
+app.use("/api/v1/admin", require("./routes/admin.routes"));
 
 // Error handler middleware (MUST be last)
 app.use(errorMiddleware);

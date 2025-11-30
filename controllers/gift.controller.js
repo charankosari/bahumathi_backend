@@ -14,7 +14,7 @@ const {
  */
 exports.allocateGift = asyncHandler(async (req, res, next) => {
   const { giftId } = req.params;
-  const { allocationType, amount } = req.body;
+  const { allocationType, amount, giftIds } = req.body;
   const userId = req.user.id;
 
   // Validate allocation type
@@ -39,6 +39,7 @@ exports.allocateGift = asyncHandler(async (req, res, next) => {
     // Use the shared allocation service (handles validation and conversion)
     const result = await allocateGift({
       giftId,
+      giftIds, // Pass the list of gift IDs for bulk allocation
       userId,
       allocationType,
       amount,

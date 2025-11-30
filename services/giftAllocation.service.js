@@ -56,7 +56,8 @@ async function addGiftToUserHistory({
  * Supports partial allocation - if amount is provided, only that amount is allocated
  *
  * @param {Object} params
- * @param {string} params.giftId - Gift ID (for tracking)
+ * @param {string} params.giftId - Gift ID (for tracking, optional if giftIds provided)
+ * @param {Array<string>} params.giftIds - List of Gift IDs for bulk allocation (optional)
  * @param {string} params.userId - User ID (receiver)
  * @param {string} params.allocationType - "gold" or "stock"
  * @param {number} params.amount - Amount in INR to allocate (required)
@@ -65,6 +66,7 @@ async function addGiftToUserHistory({
  */
 async function allocateGift({
   giftId,
+  giftIds,
   userId,
   allocationType,
   amount, // Required: Amount in INR to allocate
@@ -189,16 +191,27 @@ async function allocateGift({
     );
   }
 
-  // Update gift status if giftId provided and valid
-  if (giftIdStr !== "") {
+  // Update gift status if giftId or giftIds provided
+  const idsToUpdate = [];
+  if (giftIdStr !== "") idsToUpdate.push(giftIdStr);
+  if (giftIds && Array.isArray(giftIds)) {
+    giftIds.forEach((id) => {
+      if (id && String(id).trim() !== "") idsToUpdate.push(String(id).trim());
+    });
+  }
+
+  // Remove duplicates
+  const uniqueIds = [...new Set(idsToUpdate)];
+
+  for (const id of uniqueIds) {
     const gift = session
-      ? await Gift.findById(giftIdStr).session(session)
-      : await Gift.findById(giftIdStr);
+      ? await Gift.findById(id).session(session)
+      : await Gift.findById(id);
 
     if (gift) {
       // Check total allocated for this gift
       const totalAllocatedForGift = userHistory.allocationHistory
-        .filter((a) => a.giftId && a.giftId.toString() === giftIdStr)
+        .filter((a) => a.giftId && a.giftId.toString() === id)
         .reduce((sum, a) => sum + a.amount, 0);
 
       // Update gift status
@@ -213,7 +226,7 @@ async function allocateGift({
 
         // Disable any pending auto-allocation task for this gift
         await AutoAllocationTask.findOneAndUpdate(
-          { giftId: giftIdStr },
+          { giftId: id },
           {
             isActive: false,
             lastRunAt: new Date(),
@@ -226,7 +239,7 @@ async function allocateGift({
 
         // Reschedule the task to check again in 1 hour (if task exists)
         await AutoAllocationTask.findOneAndUpdate(
-          { giftId: giftIdStr, isActive: true },
+          { giftId: id, isActive: true },
           {
             scheduledAt: new Date(Date.now() + 60 * 60 * 1000),
             lastRunAt: new Date(),

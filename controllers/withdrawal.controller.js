@@ -1,4 +1,5 @@
 const WithdrawalRequest = require("../models/WithdrawalRequest");
+const Kyc = require("../models/Kyc");
 const Event = require("../models/Event");
 const Gift = require("../models/Gift");
 const UserHistory = require("../models/UserHistory");
@@ -37,10 +38,35 @@ exports.createWithdrawalRequest = asyncHandler(async (req, res, next) => {
     return next(err);
   }
 
-  // Check if event is still active
-  if (event.status !== "active") {
+  // 1. Check KYC Status
+  const kyc = await Kyc.findOne({ user: userId });
+  if (!kyc || kyc.status !== "approved") {
+    const err = new Error("You must have an approved KYC to request a withdrawal");
+    err.statusCode = 403;
+    return next(err);
+  }
+
+  // 2. Check Event Status (Must be ended)
+  const now = new Date();
+  if (now <= event.eventEndDate) {
     const err = new Error(
-      "Cannot create withdrawal request for inactive event"
+      "Withdrawals are only allowed after the event has ended"
+    );
+    err.statusCode = 400;
+    return next(err);
+  }
+
+  // 3. Check Gift Status (Must be unallotted)
+  // We check if ANY gift in this event has been allotted.
+  // If even one gift is allotted, we block withdrawal (based on "gifts are in unallotted state" requirement)
+  const allottedGiftsCount = await Gift.countDocuments({
+    eventId: event._id,
+    status: "allotted",
+  });
+
+  if (allottedGiftsCount > 0) {
+    const err = new Error(
+      "Cannot withdraw: Some gifts have already been allotted. Withdrawals are only allowed when gifts are in unallotted state."
     );
     err.statusCode = 400;
     return next(err);
@@ -52,16 +78,6 @@ exports.createWithdrawalRequest = asyncHandler(async (req, res, next) => {
     (sum, gift) => sum + (gift.valueInINR || 0),
     0
   );
-
-  // Check if withdrawal is allowed (must be during event period)
-  const now = new Date();
-  if (now < event.eventStartDate || now > event.eventEndDate) {
-    const err = new Error(
-      "Withdrawals are only allowed during the event period"
-    );
-    err.statusCode = 400;
-    return next(err);
-  }
 
   // Calculate maximum withdrawable amount (30% of total gifts)
   const maxWithdrawable = (totalAmount * event.withdrawalPercentage) / 100;

@@ -1,7 +1,7 @@
 const jwt = require("jsonwebtoken");
-const User = require("../models/user.model"); // Assuming your user model is in ../models/User
-const errorHandler = require("../utils/errorHandler");
-const asyncHandler = require("./asyncHandler"); // Assuming your asyncHandler is in the same directory
+const User = require("../models/user.model");
+const Admin = require("../models/admin.model");
+const asyncHandler = require("./asyncHandler");
 
 exports.isAuthorized = asyncHandler(async (req, res, next) => {
   let token;
@@ -17,7 +17,19 @@ exports.isAuthorized = asyncHandler(async (req, res, next) => {
   }
 
   const decoded = jwt.verify(token, process.env.JWT_SECRET);
-  req.user = decoded;
+
+  // Check user type and fetch from appropriate model
+  if (decoded.type === "admin") {
+    req.user = await Admin.findById(decoded.id);
+  } else {
+    req.user = await User.findById(decoded.id);
+  }
+
+  if (!req.user) {
+    const err = new Error("User not found");
+    err.statusCode = 401;
+    return next(err);
+  }
 
   next();
 });

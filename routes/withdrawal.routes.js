@@ -11,35 +11,35 @@ router.route("/").post(withdrawalController.createWithdrawalRequest);
 // Get withdrawal requests for current user
 router.route("/").get(withdrawalController.getMyWithdrawalRequests);
 
-// Get all withdrawal requests (superAdmin and reconciliation only)
+// Get all withdrawal requests (admin and reconciliation only)
 router
   .route("/all")
   .get(
-    roleAuthorize("superAdmin", "reconciliation"),
+    roleAuthorize("admin", "reconciliation"),
     withdrawalController.getAllWithdrawalRequests
   );
 
-// Get withdrawal requests for an event (superAdmin and reconciliation only)
+// Get withdrawal requests for an event (admin and reconciliation only)
 router
   .route("/event/:eventId")
   .get(
-    roleAuthorize("superAdmin", "reconciliation"),
+    roleAuthorize("admin", "reconciliation"),
     withdrawalController.getEventWithdrawalRequests
   );
 
-// Approve withdrawal request (superAdmin and reconciliation only)
+// Approve withdrawal request (admin and reconciliation only)
 router
   .route("/:requestId/approve")
   .patch(
-    roleAuthorize("superAdmin", "reconciliation"),
+    roleAuthorize("admin", "reconciliation"),
     withdrawalController.approveWithdrawalRequest
   );
 
-// Reject withdrawal request (superAdmin and reconciliation only)
+// Reject withdrawal request (admin and reconciliation only)
 router
   .route("/:requestId/reject")
   .patch(
-    roleAuthorize("superAdmin", "reconciliation"),
+    roleAuthorize("admin", "reconciliation"),
     withdrawalController.rejectWithdrawalRequest
   );
 

@@ -40,7 +40,7 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ["user", "admin", "superAdmin", "reconciliation"],
+    enum: ["user"],
     default: "user",
   },
   active: {
@@ -64,7 +64,7 @@ const userSchema = new mongoose.Schema({
 // Instance method to generate JWT
 userSchema.methods.getJwtToken = function () {
   return jwt.sign(
-    { id: this._id, role: this.role }, // include role here
+    { id: this._id, role: this.role, type: "user" }, // Added 'type'
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRE || "7d" }
   );
