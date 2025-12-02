@@ -25,6 +25,13 @@ router
     userController.getAllUsers
   );
 
+router
+  .route("/users/find")
+  .post(
+    roleAuthorize("admin", "reconciliation_agent", "onboarding_agent"),
+    userController.getUserByIdOrNumber
+  );
+
 // Routes requiring 'admin' role
 router.use(roleAuthorize("admin"));
 
