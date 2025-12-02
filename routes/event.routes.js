@@ -23,4 +23,7 @@ router.route("/:eventId").patch(eventController.updateEvent);
 // Delete event
 router.route("/:eventId").delete(eventController.deleteEvent);
 
+// End event now
+router.route("/:eventId/end").post(eventController.endEventNow);
+
 module.exports = router;

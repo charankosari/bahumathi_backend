@@ -323,3 +323,34 @@ exports.deleteEvent = asyncHandler(async (req, res, next) => {
     message: "Event deleted successfully",
   });
 });
+
+/**
+ * End event now
+ * POST /api/v1/events/:eventId/end
+ */
+exports.endEventNow = asyncHandler(async (req, res, next) => {
+  const { eventId } = req.params;
+  const userId = req.user.id;
+
+  const event = await Event.findOne({ _id: eventId, creatorId: userId });
+
+  if (!event) {
+    const err = new Error(
+      "Event not found or you don't have permission to update it"
+    );
+    err.statusCode = 404;
+    return next(err);
+  }
+
+  // Set end date to now
+  event.eventEndDate = new Date();
+  await event.save();
+
+  res.status(200).json({
+    success: true,
+    message: "Event ended successfully",
+    data: {
+      event: event,
+    },
+  });
+});
