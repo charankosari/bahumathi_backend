@@ -3,18 +3,18 @@ const asyncHandler = require("../middlewares/asyncHandler");
 
 // Admin/Agent Login
 exports.login = asyncHandler(async (req, res, next) => {
-  const { email, username, password } = req.body;
+  const { username, password } = req.body;
 
-  if (!password || (!email && !username)) {
+  if (!password || !username) {
     return res.status(400).json({
       success: false,
-      message: "Please provide email/username and password",
+      message: "Please provide username and password",
     });
   }
 
-  // Find admin by email or username
+  // Find admin by username
   const admin = await Admin.findOne({
-    $or: [{ email }, { username }],
+    username,
   }).select("+password");
 
   if (!admin) {
