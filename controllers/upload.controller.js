@@ -34,6 +34,7 @@ exports.uploadPrivate = async (req, res, next) => {
     const file = req.file.buffer;
     const fileName = sanitizeFileName(req.file.originalname);
 
+    console.log(`📂 Uploading Private: ${fileName}, Mime: ${req.file.mimetype}`);
     const key = await uploader.uploadPrivateFile(
       fileName,
       file,
