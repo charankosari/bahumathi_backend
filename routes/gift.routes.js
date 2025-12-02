@@ -5,7 +5,10 @@ const { isAuthorized } = require("../middlewares/auth");
 // All routes require authentication
 router.use(isAuthorized);
 
-// Allocate money from user's unallotted money to gold or stock
+// Allocate money from user's unallotted money (pool) or bulk allocation
+router.route("/allocate").post(giftController.allocateGift);
+
+// Allocate money from a specific gift
 router.route("/:giftId/allocate").post(giftController.allocateGift);
 
 // Get user's allocation summary
