@@ -467,6 +467,8 @@ const sendGiftWithMessageNotification = async (
       notificationBody = "You sent yourself a gift with a voice message";
     } else if (messageType === "video") {
       notificationBody = "You sent yourself a gift with a video";
+    } else if (messageType === "gift") {
+      notificationBody = "You sent yourself a gift";
     } else {
       notificationBody = "You sent yourself a gift with message";
     }
@@ -480,6 +482,8 @@ const sendGiftWithMessageNotification = async (
       notificationBody = "sent you a gift with a voice message";
     } else if (messageType === "video") {
       notificationBody = "sent you a gift with a video";
+    } else if (messageType === "gift") {
+      notificationBody = "sent you a gift";
     } else {
       notificationBody = "sent you a gift with message";
     }

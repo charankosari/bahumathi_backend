@@ -6,8 +6,6 @@ const {
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 const { Upload } = require("@aws-sdk/lib-storage");
 
-const sharp = require("sharp");
-
 const s3Client = new S3Client({
   region: process.env.S3_REGION,
   endpoint: process.env.S3_ENDPOINT,
@@ -19,33 +17,17 @@ const s3Client = new S3Client({
 });
 
 class Uploader {
-  async compressImage(fileBuffer, quality) {
-    if (quality === "low") {
-      try {
-        return await sharp(fileBuffer)
-          .resize({ width: 1024, withoutEnlargement: true }) // Resize to max width 1024px
-          .jpeg({ quality: 70 }) // Compress to 70% quality
-          .toBuffer();
-      } catch (error) {
-        console.error("Error compressing image:", error);
-        return fileBuffer; // Return original if compression fails
-      }
-    }
-    return fileBuffer;
-  }
-
-  async uploadPublicFile(fileName, fileBuffer, quality = "low") {
+  async uploadPublicFile(fileName, fileBuffer, mimetype, quality = "low") {
     const folderName = "public";
     try {
-      const processedBuffer = await this.compressImage(fileBuffer, quality);
-      
       const upload = new Upload({
         client: s3Client,
         params: {
           Bucket: process.env.S3_BUCKET,
           ACL: "public-read",
-          Body: processedBuffer,
+          Body: fileBuffer,
           Key: `${folderName}/${fileName}`,
+          ContentType: mimetype,
         },
       });
 
@@ -58,18 +40,17 @@ class Uploader {
     }
   }
 
-  async uploadPrivateFile(fileName, fileBuffer, quality = "low") {
+  async uploadPrivateFile(fileName, fileBuffer, mimetype, quality = "low") {
     const folderName = "private";
     try {
-      const processedBuffer = await this.compressImage(fileBuffer, quality);
-
       const upload = new Upload({
         client: s3Client,
         params: {
           Bucket: process.env.S3_BUCKET,
           ACL: "private",
-          Body: processedBuffer,
+          Body: fileBuffer,
           Key: `${folderName}/${fileName}`,
+          ContentType: mimetype,
         },
       });
 

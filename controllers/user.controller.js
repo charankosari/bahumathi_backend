@@ -31,7 +31,11 @@ const ensureUserQr = async (user) => {
   const pngBuffer = await QRCode.toBuffer(url, { type: "png", width: 512 });
   const uploader = new Uploader();
   const keyName = `qr_${user._id}.png`;
-  const publicUrl = await uploader.uploadPublicFile(keyName, pngBuffer);
+  const publicUrl = await uploader.uploadPublicFile(
+    keyName,
+    pngBuffer,
+    "image/png"
+  );
   user.qrCodeUrl = publicUrl;
   await user.save({ validateBeforeSave: false });
   return user;
@@ -595,7 +599,11 @@ exports.generateUserQr = asyncHandler(async (req, res, next) => {
 
     const uploader = new Uploader();
     const keyName = `qr_${user._id}.png`;
-    const publicUrl = await uploader.uploadPublicFile(keyName, pngBuffer);
+    const publicUrl = await uploader.uploadPublicFile(
+      keyName,
+      pngBuffer,
+      "image/png"
+    );
 
     user.qrCodeUrl = publicUrl;
     await user.save({ validateBeforeSave: false });

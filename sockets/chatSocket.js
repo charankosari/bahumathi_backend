@@ -401,7 +401,9 @@ function initChatSocket(io) {
         }
 
         // --- CREATE CHAT MESSAGE FOR GIFT ---
-        // This ensures the gift appears in the chat history
+        // REMOVED: We do not create a message here anymore.
+        // The message will be created when the user explicitly sends a message with the gift attached.
+        /*
         const Message = require("../models/Message");
         const [giftMessage] = await Message.create(
           [
@@ -456,6 +458,7 @@ function initChatSocket(io) {
             conversation: conversationForSocket,
           });
         }
+        */
 
 
         // --- AUTO-ALLOT SELF GIFTS ---
@@ -1215,33 +1218,18 @@ function initChatSocket(io) {
               // Otherwise, if gift already existed (giftId was provided), send separate message notification
               // If only message (no gift), send message notification
               if (giftRecord && newMessage) {
-                // Check if gift already existed (giftId was provided) or was just created
-                if (giftId) {
-                  // Gift already existed, message sent after - send message notification only
-                  // (Gift notification was already sent when gift was created via sendGift)
-                  await sendMessageNotification(
-                    receiver.fcmToken,
-                    newMessage,
-                    sender,
-                    content // Pass unencrypted content
-                  );
-                  console.log(
-                    `📱 Push notification sent for message (after gift) to ${actualReceiverId}`
-                  );
-                } else {
-                  // Gift and message created together in this transaction
-                  // Send giftWithMessage notification
-                  await sendGiftWithMessageNotification(
-                    receiver.fcmToken,
-                    giftRecord,
-                    newMessage,
-                    sender,
-                    content // Pass unencrypted content
-                  );
-                  console.log(
-                    `📱 Push notification sent for gift with message to ${actualReceiverId}`
-                  );
-                }
+                // Always send giftWithMessage notification if a gift is attached
+                // regardless of whether it was just created or existed before
+                await sendGiftWithMessageNotification(
+                  receiver.fcmToken,
+                  giftRecord,
+                  newMessage,
+                  sender,
+                  content // Pass unencrypted content
+                );
+                console.log(
+                  `📱 Push notification sent for gift with message to ${actualReceiverId}`
+                );
               } else if (newMessage) {
                 // Only message, no gift - send message notification
                 await sendMessageNotification(

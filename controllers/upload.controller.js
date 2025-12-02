@@ -16,7 +16,11 @@ exports.uploadPublic = async (req, res, next) => {
     const file = req.file.buffer;
     const fileName = sanitizeFileName(req.file.originalname);
 
-    const url = await uploader.uploadPublicFile(fileName, file);
+    const url = await uploader.uploadPublicFile(
+      fileName,
+      file,
+      req.file.mimetype
+    );
 
     res.status(200).json({ success: true, url, status: 200 });
   } catch (error) {
@@ -30,7 +34,11 @@ exports.uploadPrivate = async (req, res, next) => {
     const file = req.file.buffer;
     const fileName = sanitizeFileName(req.file.originalname);
 
-    const key = await uploader.uploadPrivateFile(fileName, file);
+    const key = await uploader.uploadPrivateFile(
+      fileName,
+      file,
+      req.file.mimetype
+    );
     res.status(200).json({ success: true, key });
   } catch (error) {
     next(error);
