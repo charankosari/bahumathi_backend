@@ -101,15 +101,31 @@ exports.createAgent = asyncHandler(async (req, res, next) => {
   });
 });
 
-// Get all agents
+// Get all agents with pagination
 exports.getAgents = asyncHandler(async (req, res, next) => {
-  const agents = await Admin.find({
-    role: { $in: ["onboarding_agent", "reconciliation_agent"] },
+  const page = parseInt(req.query.page, 10) || 1;
+  const limit = parseInt(req.query.limit, 10) || 10;
+  const startIndex = (page - 1) * limit;
+
+  const total = await Admin.countDocuments({
+    role: { $in: ["onboarding_agent", "reconciliation_agent", "admin"] },
   });
+
+  const agents = await Admin.find({
+    role: { $in: ["onboarding_agent", "reconciliation_agent", "admin"] },
+  })
+    .skip(startIndex)
+    .limit(limit);
 
   res.status(200).json({
     success: true,
     count: agents.length,
+    pagination: {
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    },
     agents,
   });
 });

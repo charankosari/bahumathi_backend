@@ -649,3 +649,29 @@ exports.updateFcmToken = asyncHandler(async (req, res, next) => {
     message: "FCM token updated successfully",
   });
 });
+
+// ========== GET ALL USERS (Admin/Agent) ==========
+exports.getAllUsers = asyncHandler(async (req, res, next) => {
+  const page = parseInt(req.query.page, 10) || 1;
+  const limit = parseInt(req.query.limit, 10) || 10;
+  const startIndex = (page - 1) * limit;
+
+  const total = await User.countDocuments();
+
+  const users = await User.find()
+    .sort({ createdAt: -1 })
+    .skip(startIndex)
+    .limit(limit);
+
+  res.status(200).json({
+    success: true,
+    count: users.length,
+    pagination: {
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    },
+    users,
+  });
+});

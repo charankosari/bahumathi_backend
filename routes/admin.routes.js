@@ -16,11 +16,22 @@ router.use(isAuthorized);
 
 router.route("/change-password").put(changePassword);
 
+// Get all users (paginated) - Accessible by admin, reconciliation, and onboarding agents
+const userController = require("../controllers/user.controller");
+router
+  .route("/users")
+  .get(
+    roleAuthorize("admin", "reconciliation_agent", "onboarding_agent"),
+    userController.getAllUsers
+  );
+
 // Routes requiring 'admin' role
 router.use(roleAuthorize("admin"));
 
 router.route("/agents").post(createAgent).get(getAgents);
 
 router.route("/agents/:id").put(updateAgent).delete(deleteAgent);
+
+
 
 module.exports = router;
