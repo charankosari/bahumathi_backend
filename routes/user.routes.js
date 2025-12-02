@@ -12,7 +12,7 @@ router.route("/me").get(isAuthorized, userController.getUserDetails);
 router.route("/me/get-friends").post(isAuthorized, userController.getFriends);
 router
   .route("/me/find-friend")
-  .post( userController.getUserByIdOrNumber);
+  .post(userController.getUserByIdOrNumber);
 router
   .route("/me/recents")
   .post(isAuthorized, userController.getSuggestionsFromGifts);

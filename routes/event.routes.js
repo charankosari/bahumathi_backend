@@ -16,7 +16,7 @@ router.route("/").get(eventController.getMyEvents);
 
 // Get event by ID
 router.route("/:eventId").get(eventController.getEventById);
-
+    
 // Update event
 router.route("/:eventId").patch(eventController.updateEvent);
 

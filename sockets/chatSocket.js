@@ -400,6 +400,64 @@ function initChatSocket(io) {
           );
         }
 
+        // --- CREATE CHAT MESSAGE FOR GIFT ---
+        // This ensures the gift appears in the chat history
+        const Message = require("../models/Message");
+        const [giftMessage] = await Message.create(
+          [
+            {
+              conversationId: conversation._id,
+              senderId: senderId,
+              receiverId: actualReceiverId,
+              type: "gift",
+              content: giftData.note || "",
+              giftId: giftRecord._id,
+              status: "sent",
+              createdAt: new Date(),
+            },
+          ],
+          { session }
+        );
+
+        // Update conversation with new message
+        conversation.lastMessage = giftMessage._id;
+        conversation.lastMessageType = "gift";
+        conversation.updatedAt = new Date();
+        await conversation.save({ session });
+
+        // --- EMIT SOCKET EVENTS FOR GIFT MESSAGE ---
+        if (conversation && giftMessage) {
+          const unencryptedMessageForSocket = {
+            ...giftMessage.toObject(),
+            content: giftData.note || "",
+            gift: giftRecord.toObject(),
+            receiverNumber:
+              actualReceiverNumber || conversation.receiverNumber || null,
+          };
+
+          const conversationForSocket =
+            typeof conversation.toObject === "function"
+              ? { ...conversation.toObject() }
+              : { ...conversation };
+          conversationForSocket.receiverNumber =
+            actualReceiverNumber || conversation.receiverNumber || null;
+
+          // Emit to receiver
+          io.to(actualReceiverId).emit("receiveGiftWithMessage", {
+            message: unencryptedMessageForSocket,
+            gift: giftRecord,
+            conversation: conversationForSocket,
+          });
+
+          // Emit to sender
+          socket.emit("giftWithMessageSent", {
+            message: unencryptedMessageForSocket,
+            gift: giftRecord,
+            conversation: conversationForSocket,
+          });
+        }
+
+
         // --- AUTO-ALLOT SELF GIFTS ---
         // If this is a self gift, automatically allot it with the same type
         // Note: Money will be added to UserHistory first, then allocated
