@@ -460,7 +460,6 @@ function initChatSocket(io) {
         }
         */
 
-
         // --- AUTO-ALLOT SELF GIFTS ---
         // If this is a self gift, automatically allot it with the same type
         // Note: Money will be added to UserHistory first, then allocated

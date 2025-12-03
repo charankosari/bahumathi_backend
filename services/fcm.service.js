@@ -396,6 +396,15 @@ const sendGiftNotification = async (fcmToken, giftData, senderData) => {
         conversationId: giftData.conversationId,
         isSeen: false,
         isOpened: false,
+        // Store gift details in metadata for self-gifts
+        metadata: {
+          giftType: giftType,
+          amount: amount,
+          quantity: giftData?.quantity || 0,
+          pricePerUnit: giftData?.pricePerUnitAtGift || 0,
+          giftName: giftData?.name || "",
+          transactionId: giftData?.transactionId || null,
+        },
       });
       console.log(`✅ Notification saved to database for ${notificationType}`);
       emitRealtimeNotification(savedNotification);
@@ -420,6 +429,10 @@ const sendGiftNotification = async (fcmToken, giftData, senderData) => {
       senderImage: senderImage,
       giftType: giftType,
       amount: amount.toString(),
+      quantity: (giftData?.quantity || 0).toString(),
+      pricePerUnit: (giftData?.pricePerUnitAtGift || 0).toString(),
+      giftName: giftData?.name || "",
+      transactionId: giftData?.transactionId || "",
       appName: "Bahumati", // App name
     }
   );
