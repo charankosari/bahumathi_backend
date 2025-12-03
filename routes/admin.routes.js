@@ -6,6 +6,7 @@ const {
   deleteAgent,
   login,
   changePassword,
+  getUserTransactions,
 } = require("../controllers/admin.controller");
 const { isAuthorized, roleAuthorize } = require("../middlewares/auth");
 
@@ -32,13 +33,19 @@ router
     userController.getUserByIdOrNumber
   );
 
+// Get user transactions and withdrawals - Accessible by admin, reconciliation, and onboarding agents
+router
+  .route("/users/:userId/transactions")
+  .get(
+    roleAuthorize("admin", "reconciliation_agent", "onboarding_agent"),
+    getUserTransactions
+  );
+
 // Routes requiring 'admin' role
 router.use(roleAuthorize("admin"));
 
 router.route("/agents").post(createAgent).get(getAgents);
 
 router.route("/agents/:id").put(updateAgent).delete(deleteAgent);
-
-
 
 module.exports = router;

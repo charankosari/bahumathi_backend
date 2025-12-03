@@ -532,7 +532,39 @@ function initChatSocket(io) {
           // Don't fail gift creation if history update fails
         }
 
-        // Do NOT send push notification for gift creation
+        // Send notification for self-gifts
+        if (isSelfGift && String(senderId) === String(actualReceiverId)) {
+          try {
+            // Get receiver user data for notification
+            const receiver = await User.findById(actualReceiverId);
+            const sender = await User.findById(senderId);
+
+            if (receiver?.fcmToken) {
+              await sendGiftNotification(
+                receiver.fcmToken,
+                {
+                  ...giftRecord.toObject(),
+                  _id: giftRecord._id,
+                  senderId: senderId,
+                  receiverId: actualReceiverId,
+                  isSelfGift: true,
+                },
+                sender
+              );
+              console.log(
+                `📱 Push notification sent for self-gift to ${actualReceiverId}`
+              );
+            }
+          } catch (notifError) {
+            console.error(
+              "Error sending self-gift notification:",
+              notifError.message
+            );
+            // Don't fail gift creation if notification fails
+          }
+        }
+
+        // Do NOT send push notification for regular gift creation
         // Notifications will only be sent when a message is sent with the gift
         // Update UserWithNoAccount if receiver is non-registered
         try {

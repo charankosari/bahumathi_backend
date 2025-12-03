@@ -67,7 +67,7 @@ exports.changePassword = asyncHandler(async (req, res, next) => {
 exports.createAgent = asyncHandler(async (req, res, next) => {
   const { username, password, role } = req.body;
 
-  if (!username || !password || !role ) {
+  if (!username || !password || !role) {
     return res.status(400).json({
       success: false,
       message: "Please provide username, password, and role",
@@ -183,6 +183,275 @@ exports.deleteAgent = asyncHandler(async (req, res, next) => {
   res.status(200).json({
     success: true,
     message: "Agent deleted successfully",
+  });
+});
+
+/**
+ * Get user transactions and withdrawals
+ * GET /api/v1/admin/users/:userId/transactions
+ */
+exports.getUserTransactions = asyncHandler(async (req, res, next) => {
+  const { userId } = req.params;
+
+  // Validate userId
+  if (!userId) {
+    return res.status(400).json({
+      success: false,
+      message: "User ID is required",
+    });
+  }
+
+  const mongoose = require("mongoose");
+  const User = require("../models/user.model");
+  const Gift = require("../models/Gift");
+  const UserHistory = require("../models/UserHistory");
+  const WithdrawalRequest = require("../models/WithdrawalRequest");
+  const Event = require("../models/Event");
+
+  // Verify user exists
+  const user = await User.findById(userId);
+  if (!user) {
+    return res.status(404).json({
+      success: false,
+      message: "User not found",
+    });
+  }
+
+  // Get all events created by the user
+  const events = await Event.find({ creatorId: userId }).sort({
+    createdAt: -1,
+  });
+
+  // Get gifts for each event to calculate stats
+  const eventsWithStats = await Promise.all(
+    events.map(async (event) => {
+      const eventGifts = await Gift.find({ eventId: event._id });
+      const totalGifts = eventGifts.length;
+      const totalAmount = eventGifts.reduce(
+        (sum, gift) => sum + (gift.valueInINR || 0),
+        0
+      );
+
+      // Get withdrawal requests for this event
+      const eventWithdrawals = await WithdrawalRequest.find({
+        eventId: event._id,
+      });
+      const totalWithdrawn = eventWithdrawals
+        .filter((w) => w.status === "approved")
+        .reduce((sum, w) => sum + (w.amount || 0), 0);
+      const totalPending = eventWithdrawals
+        .filter((w) => w.status === "pending")
+        .reduce((sum, w) => sum + (w.amount || 0), 0);
+      const maxWithdrawable = (totalAmount * event.withdrawalPercentage) / 100;
+
+      return {
+        id: event._id,
+        title: event.title,
+        description: event.description,
+        image: event.image,
+        eventStartDate: event.eventStartDate,
+        eventEndDate: event.eventEndDate,
+        eventLink: event.eventLink,
+        status: event.status,
+        withdrawalPercentage: event.withdrawalPercentage,
+        stats: {
+          totalGiftsReceived: totalGifts,
+          totalGiftsAmount: totalAmount,
+          maxWithdrawable: maxWithdrawable,
+          totalWithdrawn: totalWithdrawn,
+          totalPendingWithdrawals: totalPending,
+          availableForWithdrawal: Math.max(0, maxWithdrawable - totalPending),
+        },
+        createdAt: event.createdAt,
+        updatedAt: event.updatedAt,
+      };
+    })
+  );
+
+  // Get all gifts sent by the user
+  const giftsSent = await Gift.find({ senderId: userId })
+    .populate("receiverId", "fullName image number")
+    .populate("eventId", "title eventLink")
+    .sort({ createdAt: -1 });
+
+  // Get all gifts received by the user
+  const giftsReceived = await Gift.find({ receiverId: userId })
+    .populate("senderId", "fullName image number")
+    .populate("eventId", "title eventLink")
+    .sort({ createdAt: -1 });
+
+  // Get user history for allocation transactions
+  const userHistory = await UserHistory.findOne({ userId }).populate(
+    "allocationHistory.giftId",
+    "valueInINR type name"
+  );
+
+  // Format allocation transactions
+  const allocationTransactions = userHistory
+    ? userHistory.allocationHistory.map((allocation) => ({
+        type: "allocation",
+        amount: allocation.amount,
+        allocationType: allocation.allocationType,
+        quantity: allocation.quantity,
+        pricePerUnit: allocation.pricePerUnit,
+        allocatedAt: allocation.allocatedAt,
+        giftId: allocation.giftId,
+        conversionDetails: allocation.conversionDetails,
+      }))
+    : [];
+
+  // Get all withdrawal requests
+  const withdrawals = await WithdrawalRequest.find({ userId })
+    .populate("eventId", "title eventLink eventStartDate eventEndDate")
+    .populate("approvedBy", "fullName")
+    .populate("rejectedBy", "fullName")
+    .sort({ createdAt: -1 });
+
+  // Format transactions
+  const transactions = [
+    // Gifts sent
+    ...giftsSent.map((gift) => ({
+      type: "gift_sent",
+      transactionId: gift.transactionId,
+      amount: gift.valueInINR,
+      giftType: gift.type,
+      giftName: gift.name,
+      quantity: gift.quantity,
+      status: gift.status,
+      receiver: gift.receiverId
+        ? {
+            id: gift.receiverId._id,
+            name: gift.receiverId.fullName,
+            image: gift.receiverId.image,
+            number: gift.receiverId.number,
+          }
+        : {
+            number: gift.receiverNumber,
+          },
+      event: gift.eventId
+        ? {
+            id: gift.eventId._id,
+            title: gift.eventId.title,
+            eventLink: gift.eventId.eventLink,
+          }
+        : null,
+      createdAt: gift.createdAt,
+      isSelfGift: gift.isSelfGift,
+    })),
+    // Gifts received
+    ...giftsReceived.map((gift) => ({
+      type: "gift_received",
+      transactionId: gift.transactionId,
+      amount: gift.valueInINR,
+      giftType: gift.type,
+      giftName: gift.name,
+      quantity: gift.quantity,
+      status: gift.status,
+      isAllotted: gift.isAllotted,
+      sender: gift.senderId
+        ? {
+            id: gift.senderId._id,
+            name: gift.senderId.fullName,
+            image: gift.senderId.image,
+            number: gift.senderId.number,
+          }
+        : null,
+      event: gift.eventId
+        ? {
+            id: gift.eventId._id,
+            title: gift.eventId.title,
+            eventLink: gift.eventId.eventLink,
+          }
+        : null,
+      createdAt: gift.createdAt,
+      isSelfGift: gift.isSelfGift,
+    })),
+    // Allocations
+    ...allocationTransactions,
+  ].sort((a, b) => {
+    const dateA = a.allocatedAt || a.createdAt;
+    const dateB = b.allocatedAt || b.createdAt;
+    return new Date(dateB) - new Date(dateA);
+  });
+
+  // Calculate totals
+  const totalGiftsSent = giftsSent.reduce(
+    (sum, gift) => sum + (gift.valueInINR || 0),
+    0
+  );
+  const totalGiftsReceived = giftsReceived.reduce(
+    (sum, gift) => sum + (gift.valueInINR || 0),
+    0
+  );
+  const totalAllocated = allocationTransactions.reduce(
+    (sum, alloc) => sum + (alloc.amount || 0),
+    0
+  );
+  const totalWithdrawn = withdrawals
+    .filter((w) => w.status === "approved")
+    .reduce((sum, w) => sum + (w.amount || 0), 0);
+  const totalPendingWithdrawals = withdrawals
+    .filter((w) => w.status === "pending")
+    .reduce((sum, w) => sum + (w.amount || 0), 0);
+
+  // Calculate event totals
+  const totalEventsCreated = eventsWithStats.length;
+  const totalEventGiftsAmount = eventsWithStats.reduce(
+    (sum, event) => sum + (event.stats.totalGiftsAmount || 0),
+    0
+  );
+  const totalEventWithdrawals = eventsWithStats.reduce(
+    (sum, event) => sum + (event.stats.totalWithdrawn || 0),
+    0
+  );
+
+  res.status(200).json({
+    success: true,
+    data: {
+      user: {
+        id: user._id,
+        fullName: user.fullName,
+        number: user.number,
+        image: user.image,
+      },
+      summary: {
+        totalGiftsSent,
+        totalGiftsReceived,
+        totalAllocated,
+        totalWithdrawn,
+        totalPendingWithdrawals,
+        netBalance:
+          totalGiftsReceived -
+          totalAllocated -
+          totalWithdrawn -
+          totalPendingWithdrawals,
+        totalEventsCreated,
+        totalEventGiftsAmount,
+        totalEventWithdrawals,
+      },
+      transactions: {
+        giftsSent: giftsSent.length,
+        giftsReceived: giftsReceived.length,
+        allocations: allocationTransactions.length,
+        total: transactions.length,
+        list: transactions,
+      },
+      withdrawals: {
+        total: withdrawals.length,
+        approved: withdrawals.filter((w) => w.status === "approved").length,
+        pending: withdrawals.filter((w) => w.status === "pending").length,
+        rejected: withdrawals.filter((w) => w.status === "rejected").length,
+        list: withdrawals,
+      },
+      events: {
+        total: eventsWithStats.length,
+        active: eventsWithStats.filter((e) => e.status === "active").length,
+        ended: eventsWithStats.filter((e) => e.status === "ended").length,
+        cancelled: eventsWithStats.filter((e) => e.status === "cancelled")
+          .length,
+        list: eventsWithStats,
+      },
+    },
   });
 });
 
