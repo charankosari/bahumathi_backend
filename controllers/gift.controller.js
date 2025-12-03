@@ -133,6 +133,70 @@ exports.getAllocationSummary = asyncHandler(async (req, res, next) => {
 });
 
 /**
+ * Get user's portfolio summary for home screen
+ * Returns: Overall, Gold, and Stock totals (excluding withdrawn gifts)
+ * GET /api/v1/gifts/portfolio-summary
+ */
+exports.getPortfolioSummary = asyncHandler(async (req, res, next) => {
+  const userId = req.user.id;
+
+  try {
+    const UserHistory = require("../models/UserHistory");
+    const WithdrawalRequest = require("../models/WithdrawalRequest");
+
+    // Get user history
+    const userHistory = await UserHistory.getOrCreate(userId);
+
+    // Get total withdrawn amount (approved withdrawals only)
+    const approvedWithdrawals = await WithdrawalRequest.find({
+      userId,
+      status: "approved",
+    });
+    const totalWithdrawn = approvedWithdrawals.reduce(
+      (sum, w) => sum + (w.amount || 0),
+      0
+    );
+
+    // Get allocated amounts (these are the current holdings)
+    const goldAmount = userHistory.allottedMoney?.gold || 0;
+    const stockAmount = userHistory.allottedMoney?.stock || 0;
+    const overallAmount = goldAmount + stockAmount;
+
+    // Calculate percentage change (placeholder - you can enhance this with actual market data)
+    // For now, returning 0% change
+    const goldChange = "+0.00%";
+    const stockChange = "+0.00%";
+    const overallChange = "+0.00%";
+
+    res.status(200).json({
+      success: true,
+      data: {
+        overall: {
+          amount: overallAmount,
+          change: overallChange,
+          changeAmount: 0, // You can calculate this based on previous day's value
+        },
+        gold: {
+          amount: goldAmount,
+          change: goldChange,
+          changeAmount: 0,
+        },
+        stock: {
+          amount: stockAmount,
+          change: stockChange,
+          changeAmount: 0,
+        },
+        totalWithdrawn: totalWithdrawn,
+      },
+    });
+  } catch (error) {
+    const err = new Error(error.message || "Failed to get portfolio summary");
+    err.statusCode = error.statusCode || 500;
+    return next(err);
+  }
+});
+
+/**
  * Helper function to calculate current value of a gift based on current market prices
  * This can be used to update gift values when prices change
  */

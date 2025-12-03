@@ -14,6 +14,9 @@ router.route("/:giftId/allocate").post(giftController.allocateGift);
 // Get user's allocation summary
 router.route("/allocation-summary").get(giftController.getAllocationSummary);
 
+// Get user's portfolio summary (for home screen)
+router.route("/portfolio-summary").get(giftController.getPortfolioSummary);
+
 // Accept a gift (mark as accepted)
 router.route("/:giftId/accept").patch(giftController.acceptGift);
 
