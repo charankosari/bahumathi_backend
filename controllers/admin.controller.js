@@ -374,6 +374,9 @@ exports.getUserTransactions = asyncHandler(async (req, res, next) => {
     return new Date(dateB) - new Date(dateA);
   });
 
+  // Get total unallocated money from UserHistory (current state)
+  const totalUnallocatedMoney = userHistory?.unallottedMoney || 0;
+
   // Calculate totals
   const totalGiftsSent = giftsSent.reduce(
     (sum, gift) => sum + (gift.valueInINR || 0),
@@ -420,11 +423,7 @@ exports.getUserTransactions = asyncHandler(async (req, res, next) => {
         totalAllocated,
         totalWithdrawn,
         totalPendingWithdrawals,
-        netBalance:
-          totalGiftsReceived -
-          totalAllocated -
-          totalWithdrawn -
-          totalPendingWithdrawals,
+        totalUnallocatedMoney,
         totalEventsCreated,
         totalEventGiftsAmount,
         totalEventWithdrawals,
