@@ -77,18 +77,62 @@ exports.createEvent = asyncHandler(async (req, res, next) => {
  * GET /api/v1/events
  */
 exports.getMyEvents = asyncHandler(async (req, res, next) => {
-  const userId = req.user.id;
+  // Use _id if available, otherwise use id (Mongoose provides both)
+  const userId = req.user._id || req.user.id;
   const userRole = req.user.role;
 
-  // SuperAdmin and reconciliation can view all events, others can only view their own
+  // SuperAdmin, admin, and reconciliation can view all events, others can only view their own
   const query =
-    userRole === "superAdmin" || userRole === "reconciliation"
+    userRole === "superAdmin" ||
+    userRole === "admin" ||
+    userRole === "reconciliation"
       ? {}
       : { creatorId: userId };
+
+  // Debug logging
+  console.log("🔍 [getMyEvents] Query:", JSON.stringify(query));
+  console.log("🔍 [getMyEvents] User ID:", userId?.toString());
+  console.log("🔍 [getMyEvents] User _id:", req.user._id?.toString());
+  console.log("🔍 [getMyEvents] User id:", req.user.id);
+  console.log("🔍 [getMyEvents] User Role:", userRole);
 
   const events = await Event.find(query)
     .sort({ createdAt: -1 })
     .populate("creatorId", "fullName image");
+
+  console.log("🔍 [getMyEvents] Found events:", events.length);
+
+  // Also check if there are any events in the database at all
+  const totalEvents = await Event.countDocuments({});
+  console.log("🔍 [getMyEvents] Total events in DB:", totalEvents);
+
+  // If no events found but user is not admin, check if creatorId matches
+  if (
+    events.length === 0 &&
+    userRole !== "superAdmin" &&
+    userRole !== "reconciliation"
+  ) {
+    const allEvents = await Event.find({}).select("creatorId");
+    console.log(
+      "🔍 [getMyEvents] All event creatorIds:",
+      allEvents.map((e) => e.creatorId?.toString())
+    );
+    console.log("🔍 [getMyEvents] Current user ID:", userId?.toString());
+
+    // Try to find events with different ID formats
+    const mongoose = require("mongoose");
+    const matchingEvents = await Event.find({
+      $or: [
+        { creatorId: userId },
+        { creatorId: userId?.toString() },
+        { creatorId: new mongoose.Types.ObjectId(userId) },
+      ],
+    });
+    console.log(
+      "🔍 [getMyEvents] Events with various ID formats:",
+      matchingEvents.length
+    );
+  }
 
   res.status(200).json({
     success: true,
@@ -153,9 +197,11 @@ exports.getEventById = asyncHandler(async (req, res, next) => {
   const userId = req.user.id;
   const userRole = req.user.role;
 
-  // SuperAdmin and reconciliation can view any event, others can only view their own
+  // SuperAdmin, admin, and reconciliation can view any event, others can only view their own
   const query =
-    userRole === "superAdmin" || userRole === "reconciliation"
+    userRole === "superAdmin" ||
+    userRole === "admin" ||
+    userRole === "reconciliation"
       ? { _id: eventId }
       : { _id: eventId, creatorId: userId };
 
