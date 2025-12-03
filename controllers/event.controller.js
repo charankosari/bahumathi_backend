@@ -219,30 +219,116 @@ exports.getEventById = asyncHandler(async (req, res, next) => {
   }
 
   // Get total gifts for this event
-  const gifts = await Gift.find({ eventId: event._id });
+  const gifts = await Gift.find({ eventId: event._id })
+    .populate("senderId", "fullName image number")
+    .populate("receiverId", "fullName image number")
+    .sort({ createdAt: -1 });
+
   const totalGifts = gifts.length;
   const totalAmount = gifts.reduce(
     (sum, gift) => sum + (gift.valueInINR || 0),
     0
   );
 
-  // Get pending withdrawal requests
+  // Get all withdrawal requests for this event
   const WithdrawalRequest = require("../models/WithdrawalRequest");
-  const pendingRequests = await WithdrawalRequest.find({
+  const allWithdrawals = await WithdrawalRequest.find({
     eventId: event._id,
-    status: "pending",
-  });
+  })
+    .populate("userId", "fullName image number")
+    .populate("approvedBy", "fullName")
+    .populate("rejectedBy", "fullName")
+    .sort({ createdAt: -1 });
+
+  const pendingRequests = allWithdrawals.filter(
+    (req) => req.status === "pending"
+  );
+  const approvedRequests = allWithdrawals.filter(
+    (req) => req.status === "approved"
+  );
+  const rejectedRequests = allWithdrawals.filter(
+    (req) => req.status === "rejected"
+  );
 
   // Calculate available amount for withdrawal (considering pending requests)
   const totalPendingAmount = pendingRequests.reduce(
     (sum, req) => sum + req.amount,
     0
   );
+  const totalWithdrawnAmount = approvedRequests.reduce(
+    (sum, req) => sum + req.amount,
+    0
+  );
   const maxWithdrawable = (totalAmount * event.withdrawalPercentage) / 100;
   const availableForWithdrawal = Math.max(
     0,
-    maxWithdrawable - totalPendingAmount
+    maxWithdrawable - totalPendingAmount - totalWithdrawnAmount
   );
+
+  // Format gifts for response
+  const formattedGifts = gifts.map((gift) => ({
+    id: gift._id,
+    transactionId: gift.transactionId,
+    amount: gift.valueInINR,
+    giftType: gift.type,
+    giftName: gift.name,
+    quantity: gift.quantity,
+    pricePerUnit: gift.pricePerUnitAtGift,
+    status: gift.status,
+    isAllotted: gift.isAllotted,
+    sender: gift.senderId
+      ? {
+          id: gift.senderId._id,
+          name: gift.senderId.fullName,
+          image: gift.senderId.image,
+          number: gift.senderId.number,
+        }
+      : null,
+    receiver: gift.receiverId
+      ? {
+          id: gift.receiverId._id,
+          name: gift.receiverId.fullName,
+          image: gift.receiverId.image,
+          number: gift.receiverId.number,
+        }
+      : null,
+    createdAt: gift.createdAt,
+    isSelfGift: gift.isSelfGift,
+  }));
+
+  // Format withdrawals for response
+  const formattedWithdrawals = allWithdrawals.map((withdrawal) => ({
+    id: withdrawal._id,
+    amount: withdrawal.amount,
+    percentage: withdrawal.percentage,
+    totalGiftsAmount: withdrawal.totalGiftsAmount,
+    status: withdrawal.status,
+    moneyState: withdrawal.moneyState,
+    user: withdrawal.userId
+      ? {
+          id: withdrawal.userId._id,
+          name: withdrawal.userId.fullName,
+          image: withdrawal.userId.image,
+          number: withdrawal.userId.number,
+        }
+      : null,
+    approvedBy: withdrawal.approvedBy
+      ? {
+          id: withdrawal.approvedBy._id,
+          name: withdrawal.approvedBy.fullName,
+        }
+      : null,
+    rejectedBy: withdrawal.rejectedBy
+      ? {
+          id: withdrawal.rejectedBy._id,
+          name: withdrawal.rejectedBy.fullName,
+        }
+      : null,
+    approvedAt: withdrawal.approvedAt,
+    rejectedAt: withdrawal.rejectedAt,
+    rejectionReason: withdrawal.rejectionReason,
+    createdAt: withdrawal.createdAt,
+  }));
 
   res.status(200).json({
     success: true,
@@ -253,7 +339,17 @@ exports.getEventById = asyncHandler(async (req, res, next) => {
         totalAmount: totalAmount,
         maxWithdrawable: maxWithdrawable,
         totalPendingWithdrawals: totalPendingAmount,
+        totalWithdrawn: totalWithdrawnAmount,
         availableForWithdrawal: availableForWithdrawal,
+      },
+      // Include gifts and withdrawals for admin users
+      gifts: formattedGifts,
+      withdrawals: {
+        total: allWithdrawals.length,
+        pending: pendingRequests.length,
+        approved: approvedRequests.length,
+        rejected: rejectedRequests.length,
+        list: formattedWithdrawals,
       },
     },
   });
