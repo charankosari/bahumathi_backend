@@ -269,16 +269,33 @@ exports.getUserTransactions = asyncHandler(async (req, res, next) => {
   );
 
   // Get all gifts sent by the user
-  const giftsSent = await Gift.find({ senderId: userId })
+  const allGiftsSent = await Gift.find({ senderId: userId })
     .populate("receiverId", "fullName image number")
     .populate("eventId", "title eventLink")
     .sort({ createdAt: -1 });
 
   // Get all gifts received by the user
-  const giftsReceived = await Gift.find({ receiverId: userId })
+  const allGiftsReceived = await Gift.find({ receiverId: userId })
     .populate("senderId", "fullName image number")
     .populate("eventId", "title eventLink")
     .sort({ createdAt: -1 });
+
+  // Separate self-gifts from regular gifts sent
+  // Self-gifts should be counted in giftsReceived, not giftsSent
+  const giftsSent = allGiftsSent.filter(
+    (gift) =>
+      !gift.isSelfGift && String(gift.senderId) !== String(gift.receiverId)
+  );
+
+  // Include self-gifts in giftsReceived
+  const selfGifts = allGiftsSent.filter(
+    (gift) =>
+      gift.isSelfGift || String(gift.senderId) === String(gift.receiverId)
+  );
+
+  const giftsReceived = [...allGiftsReceived, ...selfGifts].sort(
+    (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+  );
 
   // Get user history for allocation transactions
   const userHistory = await UserHistory.findOne({ userId }).populate(
