@@ -14,7 +14,7 @@ exports.createEvent = asyncHandler(async (req, res, next) => {
     image,
     eventStartDate,
     eventEndDate,
-    withdrawalPercentage,
+    // withdrawalPercentage,
   } = req.body;
   const userId = req.user.id;
 
@@ -44,12 +44,12 @@ exports.createEvent = asyncHandler(async (req, res, next) => {
   }
 
   // Validate withdrawal percentage
-  const percentage = withdrawalPercentage || 30;
-  if (percentage < 0 || percentage > 100) {
-    const err = new Error("Withdrawal percentage must be between 0 and 100");
-    err.statusCode = 400;
-    return next(err);
-  }
+  // const percentage = withdrawalPercentage || 30;
+  // if (percentage < 0 || percentage > 100) {
+  //   const err = new Error("Withdrawal percentage must be between 0 and 100");
+  //   err.statusCode = 400;
+  //   return next(err);
+  // }
 
   // Create event
   const event = await Event.create({
@@ -59,7 +59,7 @@ exports.createEvent = asyncHandler(async (req, res, next) => {
     image,
     eventStartDate: startDate,
     eventEndDate: endDate,
-    withdrawalPercentage: percentage,
+    // withdrawalPercentage: percentage,
   });
 
   res.status(201).json({
@@ -362,6 +362,7 @@ exports.getEventById = asyncHandler(async (req, res, next) => {
 exports.updateEvent = asyncHandler(async (req, res, next) => {
   const { eventId } = req.params;
   const userId = req.user.id;
+  const userRole = req.user.role;
   const {
     title,
     description,
@@ -371,7 +372,13 @@ exports.updateEvent = asyncHandler(async (req, res, next) => {
     withdrawalPercentage,
   } = req.body;
 
-  const event = await Event.findOne({ _id: eventId, creatorId: userId });
+  // SuperAdmin, admin, and reconciliation can update any event, others can only update their own
+  const query =
+    userRole === "admin" || userRole === "reconciliation"
+      ? { _id: eventId }
+      : { _id: eventId, creatorId: userId };
+
+  const event = await Event.findOne(query);
 
   if (!event) {
     const err = new Error(
@@ -379,6 +386,27 @@ exports.updateEvent = asyncHandler(async (req, res, next) => {
     );
     err.statusCode = 404;
     return next(err);
+  }
+
+  // Check if user is trying to update withdrawalPercentage
+  // Only admin, superAdmin, or reconciliation can update this field
+  if (withdrawalPercentage !== undefined) {
+    const isAdminRole = userRole === "admin" || userRole === "reconciliation";
+
+    if (!isAdminRole) {
+      const err = new Error(
+        "Only admin users can update withdrawal percentage"
+      );
+      err.statusCode = 403;
+      return next(err);
+    }
+
+    if (withdrawalPercentage < 0 || withdrawalPercentage > 100) {
+      const err = new Error("Withdrawal percentage must be between 0 and 100");
+      err.statusCode = 400;
+      return next(err);
+    }
+    event.withdrawalPercentage = withdrawalPercentage;
   }
 
   // Update fields
@@ -402,14 +430,6 @@ exports.updateEvent = asyncHandler(async (req, res, next) => {
       return next(err);
     }
     event.eventEndDate = endDate;
-  }
-  if (withdrawalPercentage !== undefined) {
-    if (withdrawalPercentage < 0 || withdrawalPercentage > 100) {
-      const err = new Error("Withdrawal percentage must be between 0 and 100");
-      err.statusCode = 400;
-      return next(err);
-    }
-    event.withdrawalPercentage = withdrawalPercentage;
   }
 
   // Validate dates if both are updated
