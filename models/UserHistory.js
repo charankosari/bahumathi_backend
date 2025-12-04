@@ -44,7 +44,7 @@ const userHistorySchema = new mongoose.Schema(
         giftId: {
           type: mongoose.Schema.Types.ObjectId,
           ref: "Gift",
-          required: true,
+          required: false, // Optional - allows allocations from general unallotted pool
         },
         amount: {
           type: Number,
