@@ -82,10 +82,41 @@ async function allocateGift({
     throw new Error("amount must be a positive number");
   }
 
-  // Get or create user history
-  const userHistory = await UserHistory.getOrCreate(userId);
+  // Get or create user history WITH session if provided (to ensure we read latest data in transaction)
+  let userHistory;
+  if (session) {
+    // Fetch with session to ensure we get the latest committed data within the transaction
+    userHistory = await UserHistory.findOne({ userId }).session(session);
+    if (!userHistory) {
+      // Create new user history with session
+      userHistory = await UserHistory.create([{
+        userId: userId,
+        unallottedMoney: 0,
+        holdingMoney: 0,
+        allottedMoney: { gold: 0, stock: 0 },
+        allocationHistory: [],
+        giftHistory: [],
+      }], { session });
+      userHistory = userHistory[0];
+    }
+    // Ensure holdingMoney exists for existing records
+    if (userHistory.holdingMoney === undefined) {
+      userHistory.holdingMoney = 0;
+    }
+  } else {
+    userHistory = await UserHistory.getOrCreate(userId);
+  }
 
-  // Check if user has enough unallotted money
+  // CRITICAL: Re-fetch with session to ensure we have the latest committed state within the transaction
+  // This prevents race conditions where concurrent requests might read stale data
+  if (session) {
+    userHistory = await UserHistory.findById(userHistory._id).session(session);
+    if (!userHistory) {
+      throw new Error("User history not found");
+    }
+  }
+
+  // Validate available balance AFTER re-fetching with session
   if (userHistory.unallottedMoney < amount) {
     throw new Error(
       `Insufficient unallotted money. Available: ₹${userHistory.unallottedMoney}, Requested: ₹${amount}`
@@ -148,18 +179,49 @@ async function allocateGift({
   const validGiftId = giftIdStr !== "" ? giftIdStr : null;
 
   if (session) {
-    // Manual update with session
-    userHistory.unallottedMoney -= amount;
-    userHistory.allottedMoney[allocationType] += amount;
-    userHistory.allocationHistory.push({
-      giftId: validGiftId,
+    // Use atomic update to prevent race conditions
+    // The query condition ensures we only update if sufficient balance exists
+    // This prevents double-spending in concurrent requests
+    const allocationHistoryEntry = {
+      giftId: validGiftId ? new mongoose.Types.ObjectId(validGiftId) : null,
       amount: amount,
       allocationType: allocationType,
       quantity: quantity,
       pricePerUnit: pricePerUnit,
       allocatedAt: new Date(),
       conversionDetails: conversionDetails,
-    });
+    };
+
+    const updateResult = await UserHistory.findOneAndUpdate(
+      {
+        _id: userHistory._id,
+        unallottedMoney: { $gte: amount }, // Only update if sufficient balance
+      },
+      {
+        $inc: {
+          [`allottedMoney.${allocationType}`]: amount,
+          unallottedMoney: -amount,
+        },
+        $push: {
+          allocationHistory: allocationHistoryEntry,
+        },
+      },
+      {
+        session,
+        new: true, // Return updated document
+      }
+    );
+
+    if (!updateResult) {
+      // Atomic update failed - insufficient balance (race condition detected)
+      // Re-fetch to get latest balance for error message
+      const latestHistory = await UserHistory.findById(userHistory._id).session(session);
+      throw new Error(
+        `Insufficient unallotted money. Available: ₹${latestHistory?.unallottedMoney || 0}, Requested: ₹${amount}`
+      );
+    }
+
+    userHistory = updateResult;
 
     // Update gift history to mark as fully allocated if needed
     if (validGiftId) {
@@ -175,11 +237,10 @@ async function allocateGift({
 
         if (totalAllocatedForGift >= giftEntry.amount) {
           giftEntry.isFullyAllocated = true;
+          await userHistory.save({ session });
         }
       }
     }
-
-    await userHistory.save({ session });
   } else {
     await userHistory.allocateMoney(
       amount,
