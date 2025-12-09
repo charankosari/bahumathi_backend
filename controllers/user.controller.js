@@ -218,26 +218,50 @@ exports.deleteUser = asyncHandler(async (req, res, next) => {
 });
 
 exports.editUser = asyncHandler(async (req, res, next) => {
-  const { id } = req.params;
+  // Support both :id and :userId route parameters
+  const { id, userId } = req.params;
+  const targetUserId = id || userId;
   const { fullName, number, gender, birthDate, image, defaultGiftMode } =
     req.body;
 
+  // Check if the requester is admin or onboarding_agent
+  const isAdminOrAgent =
+    req.user &&
+    req.user.role &&
+    (req.user.role === "admin" || req.user.role === "onboarding_agent");
+
+  // Check if the requester is specifically an onboarding_agent
+  const isOnboardingAgent =
+    req.user && req.user.role && req.user.role === "onboarding_agent";
+
   console.log("➡️ editUser called", {
-    id,
+    id: targetUserId,
     fullName,
     number,
     gender,
     birthDate,
     image,
     defaultGiftMode,
+    isAdminOrAgent,
+    isOnboardingAgent,
   });
 
-  const user = await User.findById(id);
+  const user = await User.findById(targetUserId);
 
   if (!user) {
     const err = new Error("User not found");
     err.statusCode = 404;
     return next(err);
+  }
+
+  // If onboarding agent, verify they can edit this user
+  // They can edit users they onboarded OR users that haven't been onboarded yet
+  if (isOnboardingAgent && req.user && req.user._id) {
+    if (user.onboardedBy && String(user.onboardedBy) !== String(req.user._id)) {
+      const err = new Error("You can only edit users you have onboarded");
+      err.statusCode = 403;
+      return next(err);
+    }
   }
 
   // Update fullName (trim whitespace and save in real-time)
@@ -251,31 +275,73 @@ exports.editUser = asyncHandler(async (req, res, next) => {
     }
   }
 
-  // Add number if it doesn’t exist
-  if (number && !user.number) {
-    const existingNumberUser = await User.findOne({ number });
-    if (existingNumberUser) {
-      const err = new Error("Phone number already in use by another user");
+  // Handle phone number update
+  if (number !== undefined && number !== null) {
+    const normalizedNumber = normalizePhoneNumber(number);
+    if (!normalizedNumber) {
+      const err = new Error("A valid 10-digit phone number is required");
       err.statusCode = 400;
       return next(err);
     }
-    user.number = number;
+
+    if (isAdminOrAgent) {
+      // Admin/Agent can update phone number even if it exists
+      // Check if number is already used by another user
+      const existingNumberUser = await User.findOne({
+        number: normalizedNumber,
+        _id: { $ne: user._id },
+      });
+      if (existingNumberUser) {
+        const err = new Error("Phone number already in use by another user");
+        err.statusCode = 400;
+        return next(err);
+      }
+      user.number = normalizedNumber;
+    } else {
+      // Regular users can only add number if it doesn't exist
+      if (!user.number) {
+        const existingNumberUser = await User.findOne({
+          number: normalizedNumber,
+        });
+        if (existingNumberUser) {
+          const err = new Error("Phone number already in use by another user");
+          err.statusCode = 400;
+          return next(err);
+        }
+        user.number = normalizedNumber;
+      }
+    }
   }
 
   // Optional updates
-  if (gender) user.gender = gender.toLowerCase();
-  if (birthDate) {
+  if (gender !== undefined && gender !== null) {
+    const normalizedGender = gender.toLowerCase();
+    if (["male", "female", "other"].includes(normalizedGender)) {
+      user.gender = normalizedGender;
+    } else {
+      const err = new Error("Invalid gender. Must be male, female, or other");
+      err.statusCode = 400;
+      return next(err);
+    }
+  }
+
+  if (birthDate !== undefined && birthDate !== null) {
     const parsed = new Date(birthDate);
     if (!isNaN(parsed.getTime())) {
       user.birthDate = parsed;
+    } else {
+      const err = new Error("Invalid birth date format");
+      err.statusCode = 400;
+      return next(err);
     }
   }
+
   // Image update (public URL from upload)
-  if (image) {
+  if (image !== undefined && image !== null) {
     user.image = image;
   }
 
-  if (defaultGiftMode) {
+  if (defaultGiftMode !== undefined && defaultGiftMode !== null) {
     const normalizedMode = defaultGiftMode.toString().toLowerCase();
     const allowedModes = ["gold", "stock"];
     if (!allowedModes.includes(normalizedMode)) {
@@ -286,11 +352,19 @@ exports.editUser = asyncHandler(async (req, res, next) => {
     user.defaultGiftMode = normalizedMode;
   }
 
+  // Track which onboarding agent onboarded/touched this user
+  if (isOnboardingAgent && req.user && req.user._id) {
+    user.onboardedBy = req.user._id;
+    console.log(`📝 User ${user._id} onboarded by agent ${req.user._id}`);
+  }
+
   await user.save({ validateBeforeSave: false });
   console.log("✅ User updated", {
     id: user._id,
     fullName: user.fullName,
+    number: user.number,
     image: user.image,
+    updatedBy: isAdminOrAgent ? req.user.role : "user",
   });
 
   res.status(200).json({
@@ -399,6 +473,10 @@ exports.getUserByIdOrNumber = asyncHandler(async (req, res, next) => {
     return next(err);
   }
 
+  // Check if the requester is an onboarding agent
+  const isOnboardingAgent =
+    req.user && req.user.role && req.user.role === "onboarding_agent";
+
   const normalizePhoneNumber = (rawNumber) => {
     if (rawNumber === null || rawNumber === undefined) return null;
     const str = String(rawNumber);
@@ -420,6 +498,14 @@ exports.getUserByIdOrNumber = asyncHandler(async (req, res, next) => {
   // Determine whether value looks like an ObjectId
   const isObjectId = /^[0-9a-fA-F]{24}$/.test(value);
 
+  // Build query filter
+  const queryFilter = { active: true };
+
+  // If onboarding agent, only allow access to users they onboarded
+  if (isOnboardingAgent && req.user && req.user._id) {
+    queryFilter.onboardedBy = req.user._id;
+  }
+
   let user = null;
   if (isObjectId) {
     // If user is searching for themselves by id, treat as not found
@@ -429,7 +515,8 @@ exports.getUserByIdOrNumber = asyncHandler(async (req, res, next) => {
       return next(err);
     }
 
-    user = await User.findOne({ _id: value, active: true });
+    queryFilter._id = value;
+    user = await User.findOne(queryFilter);
   } else {
     // Normalize phone number and compare against current user's number
     const digits = normalizePhoneNumber(value);
@@ -445,7 +532,8 @@ exports.getUserByIdOrNumber = asyncHandler(async (req, res, next) => {
       return next(err);
     }
 
-    user = await User.findOne({ number: digits, active: true });
+    queryFilter.number = digits;
+    user = await User.findOne(queryFilter);
   }
 
   if (!user) {
@@ -656,9 +744,25 @@ exports.getAllUsers = asyncHandler(async (req, res, next) => {
   const limit = parseInt(req.query.limit, 10) || 10;
   const startIndex = (page - 1) * limit;
 
-  const total = await User.countDocuments();
+  // Check if the requester is an onboarding agent
+  const isOnboardingAgent =
+    req.user && req.user.role && req.user.role === "onboarding_agent";
 
-  const users = await User.find()
+  // Build query filter
+  const queryFilter = {};
+
+  // If onboarding agent, only show users they onboarded
+  if (isOnboardingAgent && req.user && req.user._id) {
+    queryFilter.onboardedBy = req.user._id;
+    console.log(
+      `🔍 Onboarding agent ${req.user._id} viewing their onboarded users`
+    );
+  }
+  // Admins and reconciliation agents can see all users (no filter)
+
+  const total = await User.countDocuments(queryFilter);
+
+  const users = await User.find(queryFilter)
     .sort({ createdAt: -1 })
     .skip(startIndex)
     .limit(limit);

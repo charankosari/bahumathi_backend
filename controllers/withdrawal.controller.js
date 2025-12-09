@@ -3,8 +3,12 @@ const Kyc = require("../models/Kyc");
 const Event = require("../models/Event");
 const Gift = require("../models/Gift");
 const UserHistory = require("../models/UserHistory");
+const User = require("../models/user.model");
 const asyncHandler = require("../middlewares/asyncHandler");
 const mongoose = require("mongoose");
+const {
+  sendWithdrawalRejectionNotification,
+} = require("../services/fcm.service");
 
 /**
  * Create a withdrawal request
@@ -41,7 +45,9 @@ exports.createWithdrawalRequest = asyncHandler(async (req, res, next) => {
   // 1. Check KYC Status
   const kyc = await Kyc.findOne({ user: userId });
   if (!kyc || kyc.status !== "approved") {
-    const err = new Error("You must have an approved KYC to request a withdrawal");
+    const err = new Error(
+      "You must have an approved KYC to request a withdrawal"
+    );
     err.statusCode = 403;
     return next(err);
   }
@@ -88,7 +94,7 @@ exports.createWithdrawalRequest = asyncHandler(async (req, res, next) => {
     eventId: event._id,
     status: { $in: ["pending", "approved"] },
   });
-  
+
   const totalWithdrawnOrRequested = allRequests.reduce(
     (sum, req) => sum + req.amount,
     0
@@ -105,7 +111,9 @@ exports.createWithdrawalRequest = asyncHandler(async (req, res, next) => {
       `Insufficient funds. Maximum withdrawable: ₹${maxWithdrawable.toFixed(
         2
       )}, ` +
-        `Already withdrawn/requested: ₹${totalWithdrawnOrRequested.toFixed(2)}, ` +
+        `Already withdrawn/requested: ₹${totalWithdrawnOrRequested.toFixed(
+          2
+        )}, ` +
         `Available: ₹${availableForWithdrawal.toFixed(2)}`
     );
     err.statusCode = 400;
@@ -381,6 +389,34 @@ exports.rejectWithdrawalRequest = asyncHandler(async (req, res, next) => {
     await request.save({ session });
 
     await session.commitTransaction();
+
+    // Send notification to user about rejection (outside transaction)
+    try {
+      const user = await User.findById(request.userId).select("fcmToken");
+      const event = await Event.findById(request.eventId).select("title");
+
+      if (user && user.fcmToken && event) {
+        await sendWithdrawalRejectionNotification(
+          user.fcmToken,
+          request,
+          event,
+          request.rejectionReason
+        );
+        console.log(
+          `✅ Withdrawal rejection notification sent to user ${user._id}`
+        );
+      } else {
+        console.log(
+          `⚠️ Cannot send notification: user or FCM token not found for user ${request.userId}`
+        );
+      }
+    } catch (notificationError) {
+      // Don't fail the request if notification fails
+      console.error(
+        "❌ Error sending withdrawal rejection notification:",
+        notificationError.message
+      );
+    }
 
     res.status(200).json({
       success: true,

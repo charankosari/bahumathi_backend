@@ -55,6 +55,11 @@ const userSchema = new mongoose.Schema({
     type: String,
     enum: ["gold", "stock"],
   },
+  onboardedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Admin",
+    sparse: true,
+  },
   createdAt: {
     type: Date,
     default: Date.now,

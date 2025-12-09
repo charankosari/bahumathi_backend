@@ -33,6 +33,14 @@ exports.login = asyncHandler(async (req, res, next) => {
     });
   }
 
+  // Check if agent is disabled
+  if (admin.status === "disabled") {
+    return res.status(403).json({
+      success: false,
+      message: "Your account has been disabled. Please contact administrator.",
+    });
+  }
+
   sendToken(admin, 200, res);
 });
 
@@ -168,23 +176,23 @@ exports.updateAgent = asyncHandler(async (req, res, next) => {
 });
 
 // Delete agent
-exports.deleteAgent = asyncHandler(async (req, res, next) => {
-  const agent = await Admin.findById(req.params.id);
+// exports.deleteAgent = asyncHandler(async (req, res, next) => {
+//   const agent = await Admin.findById(req.params.id);
 
-  if (!agent) {
-    return res.status(404).json({
-      success: false,
-      message: "Agent not found",
-    });
-  }
+//   if (!agent) {
+//     return res.status(404).json({
+//       success: false,
+//       message: "Agent not found",
+//     });
+//   }
 
-  await agent.deleteOne();
+//   await agent.deleteOne();
 
-  res.status(200).json({
-    success: true,
-    message: "Agent deleted successfully",
-  });
-});
+//   res.status(200).json({
+//     success: true,
+//     message: "Agent deleted successfully",
+//   });
+// });
 
 /**
  * Get user transactions and withdrawals
@@ -208,6 +216,10 @@ exports.getUserTransactions = asyncHandler(async (req, res, next) => {
   const WithdrawalRequest = require("../models/WithdrawalRequest");
   const Event = require("../models/Event");
 
+  // Check if the requester is an onboarding agent
+  const isOnboardingAgent =
+    req.user && req.user.role && req.user.role === "onboarding_agent";
+
   // Verify user exists
   const user = await User.findById(userId);
   if (!user) {
@@ -215,6 +227,19 @@ exports.getUserTransactions = asyncHandler(async (req, res, next) => {
       success: false,
       message: "User not found",
     });
+  }
+
+  // If onboarding agent, verify they onboarded this user
+  if (isOnboardingAgent && req.user && req.user._id) {
+    if (
+      !user.onboardedBy ||
+      String(user.onboardedBy) !== String(req.user._id)
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "You can only view transactions for users you have onboarded",
+      });
+    }
   }
 
   // Get all events created by the user

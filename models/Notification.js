@@ -18,6 +18,8 @@ const notificationSchema = new mongoose.Schema(
         "selfGiftWithMessage",
         "transaction",
         "system",
+        "withdrawalRejected",
+        "withdrawalApproved",
       ],
       required: true,
     },
@@ -61,6 +63,16 @@ const notificationSchema = new mongoose.Schema(
     },
     transactionId: {
       type: String,
+      required: false,
+    },
+    withdrawalRequestId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "WithdrawalRequest",
+      required: false,
+    },
+    eventId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Event",
       required: false,
     },
     // Notification status

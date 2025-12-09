@@ -5,13 +5,14 @@ const asyncHandler = require("../middlewares/asyncHandler");
 /**
  * Create a new event
  * POST /api/v1/events
- * Body: { title, description, image, eventStartDate, eventEndDate, withdrawalPercentage }
+ * Body: { title, description, image, video, eventStartDate, eventEndDate, withdrawalPercentage }
  */
 exports.createEvent = asyncHandler(async (req, res, next) => {
   const {
     title,
     description,
     image,
+    video,
     eventStartDate,
     eventEndDate,
     // withdrawalPercentage,
@@ -57,6 +58,7 @@ exports.createEvent = asyncHandler(async (req, res, next) => {
     title,
     description,
     image,
+    video,
     eventStartDate: startDate,
     eventEndDate: endDate,
     // withdrawalPercentage: percentage,
@@ -367,6 +369,7 @@ exports.updateEvent = asyncHandler(async (req, res, next) => {
     title,
     description,
     image,
+    video,
     eventStartDate,
     eventEndDate,
     withdrawalPercentage,
@@ -413,6 +416,7 @@ exports.updateEvent = asyncHandler(async (req, res, next) => {
   if (title) event.title = title;
   if (description !== undefined) event.description = description;
   if (image !== undefined) event.image = image;
+  if (video !== undefined) event.video = video;
   if (eventStartDate) {
     const startDate = new Date(eventStartDate);
     if (isNaN(startDate.getTime())) {

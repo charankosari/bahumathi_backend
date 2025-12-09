@@ -558,11 +558,78 @@ const sendGiftWithMessageNotification = async (
   return notificationResult;
 };
 
+/**
+ * Send notification for withdrawal rejection
+ * @param {string} fcmToken - FCM token of the user
+ * @param {Object} withdrawalData - Withdrawal request data
+ * @param {Object} eventData - Event data
+ * @param {string} rejectionReason - Reason for rejection
+ * @returns {Promise<Object>}
+ */
+const sendWithdrawalRejectionNotification = async (
+  fcmToken,
+  withdrawalData,
+  eventData,
+  rejectionReason
+) => {
+  const eventTitle = eventData?.title || "Event";
+  const amount = withdrawalData?.amount || 0;
+  const notificationTitle = "Withdrawal Request Rejected";
+  const notificationBody = `Your withdrawal request of ₹${amount} for "${eventTitle}" has been rejected. ${
+    rejectionReason ? `Reason: ${rejectionReason}` : ""
+  }`;
+
+  // Save notification to database first
+  let savedNotification = null;
+  if (withdrawalData?.userId) {
+    try {
+      savedNotification = await Notification.create({
+        userId: withdrawalData.userId,
+        type: "withdrawalRejected",
+        title: notificationTitle,
+        description: notificationBody,
+        withdrawalRequestId: withdrawalData._id,
+        eventId: withdrawalData.eventId,
+        metadata: {
+          amount: amount,
+          eventTitle: eventTitle,
+          rejectionReason: rejectionReason || "",
+        },
+      });
+      console.log(`✅ Notification saved to database for withdrawal rejection`);
+      emitRealtimeNotification(savedNotification);
+    } catch (error) {
+      console.error("❌ Error saving notification to database:", error.message);
+    }
+  }
+
+  const notificationResult = await sendPushNotification(
+    fcmToken,
+    {
+      title: notificationTitle,
+      body: notificationBody,
+    },
+    {
+      type: "withdrawalRejected",
+      notificationId: savedNotification?._id?.toString() || "",
+      withdrawalRequestId: withdrawalData?._id?.toString() || "",
+      eventId: withdrawalData?.eventId?.toString() || "",
+      amount: amount.toString(),
+      eventTitle: eventTitle,
+      rejectionReason: rejectionReason || "",
+      appName: "Bahumati",
+    }
+  );
+
+  return notificationResult;
+};
+
 module.exports = {
   sendPushNotification,
   sendMulticastPushNotification,
   sendMessageNotification,
   sendGiftNotification,
   sendGiftWithMessageNotification,
+  sendWithdrawalRejectionNotification,
   initializeFirebase,
 };

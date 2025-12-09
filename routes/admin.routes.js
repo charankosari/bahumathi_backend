@@ -41,11 +41,17 @@ router
     getUserTransactions
   );
 
+// Edit user details - Accessible by admin and onboarding agents
+router
+  .route("/users/:userId")
+  .put(roleAuthorize("admin", "onboarding_agent"), userController.editUser);
+
 // Routes requiring 'admin' role
 router.use(roleAuthorize("admin"));
 
 router.route("/agents").post(createAgent).get(getAgents);
 
-router.route("/agents/:id").put(updateAgent).delete(deleteAgent);
+router.route("/agents/:id").put(updateAgent);
+// .delete(deleteAgent);
 
 module.exports = router;

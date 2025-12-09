@@ -31,6 +31,15 @@ exports.isAuthorized = asyncHandler(async (req, res, next) => {
     return next(err);
   }
 
+  // Check if admin/agent is disabled
+  if (decoded.type === "admin" && req.user.status === "disabled") {
+    const err = new Error(
+      "Your account has been disabled. Please contact administrator."
+    );
+    err.statusCode = 403;
+    return next(err);
+  }
+
   next();
 });
 

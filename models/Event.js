@@ -23,6 +23,10 @@ const eventSchema = new mongoose.Schema(
       type: String,
       required: false,
     },
+    video: {
+      type: String,
+      required: false,
+    },
     eventStartDate: {
       type: Date,
       required: true,

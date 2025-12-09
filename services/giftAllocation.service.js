@@ -26,14 +26,39 @@ async function addGiftToUserHistory({
   senderId,
   session = null,
 }) {
-  const userHistory = await UserHistory.getOrCreate(userId);
+  // Get or create user history - use session if provided
+  let userHistory;
+  if (session) {
+    userHistory = await UserHistory.findOne({ userId }).session(session);
+    if (!userHistory) {
+      // Create new user history with session
+      [userHistory] = await UserHistory.create(
+        [
+          {
+            userId: userId,
+            unallottedMoney: 0,
+            holdingMoney: 0,
+            allottedMoney: { gold: 0, stock: 0 },
+            allocationHistory: [],
+            giftHistory: [],
+          },
+        ],
+        { session }
+      );
+    }
+    // Ensure holdingMoney exists for existing records
+    if (userHistory.holdingMoney === undefined) {
+      userHistory.holdingMoney = 0;
+    }
+  } else {
+    userHistory = await UserHistory.getOrCreate(userId);
+  }
 
   // Add unallotted money and record in gift history
   if (session) {
-    // Use session for transaction
-    await userHistory.addUnallottedMoney(amount, giftId, senderId);
-    // Note: addUnallottedMoney saves, but we need to ensure it uses the session
-    // For now, we'll manually update and save with session
+    // Use session for transaction - manually update to ensure session is used
+    // Don't call addUnallottedMoney here because it doesn't support sessions
+    // and would cause double counting if we called it and then manually updated
     userHistory.unallottedMoney += amount;
     userHistory.giftHistory.push({
       giftId: giftId,
@@ -64,6 +89,7 @@ async function addGiftToUserHistory({
  * @param {Object} params.session - MongoDB session (optional, for transactions)
  * @returns {Object} Updated UserHistory and allocation details
  */
+
 async function allocateGift({
   giftId,
   giftIds,
@@ -89,14 +115,19 @@ async function allocateGift({
     userHistory = await UserHistory.findOne({ userId }).session(session);
     if (!userHistory) {
       // Create new user history with session
-      userHistory = await UserHistory.create([{
-        userId: userId,
-        unallottedMoney: 0,
-        holdingMoney: 0,
-        allottedMoney: { gold: 0, stock: 0 },
-        allocationHistory: [],
-        giftHistory: [],
-      }], { session });
+      userHistory = await UserHistory.create(
+        [
+          {
+            userId: userId,
+            unallottedMoney: 0,
+            holdingMoney: 0,
+            allottedMoney: { gold: 0, stock: 0 },
+            allocationHistory: [],
+            giftHistory: [],
+          },
+        ],
+        { session }
+      );
       userHistory = userHistory[0];
     }
     // Ensure holdingMoney exists for existing records
@@ -215,9 +246,13 @@ async function allocateGift({
     if (!updateResult) {
       // Atomic update failed - insufficient balance (race condition detected)
       // Re-fetch to get latest balance for error message
-      const latestHistory = await UserHistory.findById(userHistory._id).session(session);
+      const latestHistory = await UserHistory.findById(userHistory._id).session(
+        session
+      );
       throw new Error(
-        `Insufficient unallotted money. Available: ₹${latestHistory?.unallottedMoney || 0}, Requested: ₹${amount}`
+        `Insufficient unallotted money. Available: ₹${
+          latestHistory?.unallottedMoney || 0
+        }, Requested: ₹${amount}`
       );
     }
 
