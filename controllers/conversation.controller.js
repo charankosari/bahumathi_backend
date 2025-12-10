@@ -42,20 +42,8 @@ exports.getConversations = async (req, res, next) => {
 
       // If this conversation is for a phone-number (no-account) recipient
       if (convoObj.receiverNumber) {
-        // Check if receiverNumber matches any participant's number (self-gift)
-        if (convoObj.participants && convoObj.participants.length > 0) {
-          for (const participant of convoObj.participants) {
-            if (participant?.number === convoObj.receiverNumber) {
-              // This is a self-gift conversation, filter it out
-              console.log(
-                `🚫 Filtering out self-gift conversation (receiverNumber matches participant): ${convoObj._id}`
-              );
-              return false;
-            }
-          }
-        }
-        // Also check if senderId matches and receiverNumber could be sender's number
-        // Get sender's number if available
+        // Check if receiverNumber matches sender's number (self-gift)
+        // This is the primary check - if receiverNumber matches sender's number, it's a self-gift
         if (
           convoObj.senderId &&
           typeof convoObj.senderId === "object" &&
@@ -68,7 +56,20 @@ exports.getConversations = async (req, res, next) => {
             return false;
           }
         }
-        return true; // Keep non-self-gift phone number conversations
+        // Also check if receiverNumber matches any participant's number (self-gift)
+        if (convoObj.participants && convoObj.participants.length > 0) {
+          for (const participant of convoObj.participants) {
+            if (participant?.number === convoObj.receiverNumber) {
+              // This is a self-gift conversation, filter it out
+              console.log(
+                `🚫 Filtering out self-gift conversation (receiverNumber matches participant): ${convoObj._id}`
+              );
+              return false;
+            }
+          }
+        }
+        // Keep conversations with non-registered users (receiverNumber exists but doesn't match sender/participants)
+        return true;
       }
 
       // If it's a conversation with participants array
