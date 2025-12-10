@@ -40,9 +40,35 @@ exports.getConversations = async (req, res, next) => {
     const filteredConversations = conversations.filter((convo) => {
       const convoObj = convo.toObject();
 
-      // If this conversation is for a phone-number (no-account) recipient, keep it
+      // If this conversation is for a phone-number (no-account) recipient
       if (convoObj.receiverNumber) {
-        return true;
+        // Check if receiverNumber matches any participant's number (self-gift)
+        if (convoObj.participants && convoObj.participants.length > 0) {
+          for (const participant of convoObj.participants) {
+            if (participant?.number === convoObj.receiverNumber) {
+              // This is a self-gift conversation, filter it out
+              console.log(
+                `🚫 Filtering out self-gift conversation (receiverNumber matches participant): ${convoObj._id}`
+              );
+              return false;
+            }
+          }
+        }
+        // Also check if senderId matches and receiverNumber could be sender's number
+        // Get sender's number if available
+        if (
+          convoObj.senderId &&
+          typeof convoObj.senderId === "object" &&
+          convoObj.senderId.number
+        ) {
+          if (convoObj.senderId.number === convoObj.receiverNumber) {
+            console.log(
+              `🚫 Filtering out self-gift conversation (receiverNumber matches sender): ${convoObj._id}`
+            );
+            return false;
+          }
+        }
+        return true; // Keep non-self-gift phone number conversations
       }
 
       // If it's a conversation with participants array

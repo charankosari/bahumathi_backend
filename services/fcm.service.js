@@ -305,26 +305,40 @@ const sendMessageNotification = async (
   const notificationBodyFormatted = notificationBody;
 
   // Save notification to database first to get the notification ID
+  // IMPORTANT: Only send notification to receiver, NEVER to sender
   let savedNotification = null;
   if (messageData?.receiverId) {
-    try {
-      savedNotification = await Notification.create({
-        userId: messageData.receiverId,
-        type: "message",
-        title: senderName,
-        description: notificationBody, // "sent a message"
-        senderId: senderData?._id,
-        senderName: senderName,
-        senderImage: senderData?.image,
-        messageId: messageData._id,
-        conversationId: messageData.conversationId,
-        isSeen: false,
-        isOpened: false,
-      });
-      console.log("✅ Notification saved to database for message");
-      emitRealtimeNotification(savedNotification);
-    } catch (error) {
-      console.error("❌ Error saving notification to database:", error.message);
+    // Double-check that receiverId is not the same as senderId
+    const receiverId = messageData.receiverId?.toString();
+    const senderId = senderData?._id?.toString();
+
+    if (receiverId && senderId && receiverId !== senderId) {
+      try {
+        savedNotification = await Notification.create({
+          userId: messageData.receiverId,
+          type: "message",
+          title: senderName,
+          description: notificationBody, // "sent a message"
+          senderId: senderData?._id,
+          senderName: senderName,
+          senderImage: senderData?.image,
+          messageId: messageData._id,
+          conversationId: messageData.conversationId,
+          isSeen: false,
+          isOpened: false,
+        });
+        console.log("✅ Notification saved to database for message");
+        emitRealtimeNotification(savedNotification);
+      } catch (error) {
+        console.error(
+          "❌ Error saving notification to database:",
+          error.message
+        );
+      }
+    } else {
+      console.log(
+        `⚠️ Skipping notification - receiverId (${receiverId}) is same as senderId (${senderId})`
+      );
     }
   }
 
@@ -381,35 +395,53 @@ const sendGiftNotification = async (fcmToken, giftData, senderData) => {
   const notificationType = isSelfGift ? "selfGift" : "gift";
 
   // Save notification to database first to get the notification ID
+  // IMPORTANT: Only send notification to receiver, NEVER to sender
   let savedNotification = null;
   if (giftData?.receiverId) {
-    try {
-      savedNotification = await Notification.create({
-        userId: giftData.receiverId,
-        type: notificationType,
-        title: senderName,
-        description: notificationBody,
-        senderId: senderData?._id,
-        senderName: senderName,
-        senderImage: senderData?.image,
-        giftId: giftData._id,
-        conversationId: giftData.conversationId,
-        isSeen: false,
-        isOpened: false,
-        // Store gift details in metadata for self-gifts
-        metadata: {
-          giftType: giftType,
-          amount: amount,
-          quantity: giftData?.quantity || 0,
-          pricePerUnit: giftData?.pricePerUnitAtGift || 0,
-          giftName: giftData?.name || "",
-          transactionId: giftData?.transactionId || null,
-        },
-      });
-      console.log(`✅ Notification saved to database for ${notificationType}`);
-      emitRealtimeNotification(savedNotification);
-    } catch (error) {
-      console.error("❌ Error saving notification to database:", error.message);
+    // Double-check that receiverId is not the same as senderId (unless it's a self-gift)
+    const receiverId = giftData.receiverId?.toString();
+    const senderId = senderData?._id?.toString();
+
+    // For self-gifts, we still want to send the notification to the user (they sent it to themselves)
+    // For regular gifts, we should never send notification to sender
+    if (receiverId && (isSelfGift || (senderId && receiverId !== senderId))) {
+      try {
+        savedNotification = await Notification.create({
+          userId: giftData.receiverId,
+          type: notificationType,
+          title: senderName,
+          description: notificationBody,
+          senderId: senderData?._id,
+          senderName: senderName,
+          senderImage: senderData?.image,
+          giftId: giftData._id,
+          conversationId: giftData.conversationId,
+          isSeen: false,
+          isOpened: false,
+          // Store gift details in metadata for self-gifts
+          metadata: {
+            giftType: giftType,
+            amount: amount,
+            quantity: giftData?.quantity || 0,
+            pricePerUnit: giftData?.pricePerUnitAtGift || 0,
+            giftName: giftData?.name || "",
+            transactionId: giftData?.transactionId || null,
+          },
+        });
+        console.log(
+          `✅ Notification saved to database for ${notificationType}`
+        );
+        emitRealtimeNotification(savedNotification);
+      } catch (error) {
+        console.error(
+          "❌ Error saving notification to database:",
+          error.message
+        );
+      }
+    } else {
+      console.log(
+        `⚠️ Skipping notification - receiverId (${receiverId}) is same as senderId (${senderId}) and not a self-gift`
+      );
     }
   }
 
@@ -509,27 +541,45 @@ const sendGiftWithMessageNotification = async (
     : "giftWithMessage";
 
   // Save notification to database first to get the notification ID
+  // IMPORTANT: Only send notification to receiver, NEVER to sender
   let savedNotification = null;
   if (giftData?.receiverId) {
-    try {
-      savedNotification = await Notification.create({
-        userId: giftData.receiverId,
-        type: notificationType,
-        title: senderName,
-        description: notificationBody,
-        senderId: senderData?._id,
-        senderName: senderName,
-        senderImage: senderData?.image,
-        giftId: giftData._id,
-        messageId: messageData?._id,
-        conversationId: giftData.conversationId,
-        isSeen: false,
-        isOpened: false,
-      });
-      console.log(`✅ Notification saved to database for ${notificationType}`);
-      emitRealtimeNotification(savedNotification);
-    } catch (error) {
-      console.error("❌ Error saving notification to database:", error.message);
+    // Double-check that receiverId is not the same as senderId (unless it's a self-gift)
+    const receiverId = giftData.receiverId?.toString();
+    const senderId = senderData?._id?.toString();
+
+    // For self-gifts, we still want to send the notification to the user (they sent it to themselves)
+    // For regular gifts, we should never send notification to sender
+    if (receiverId && (isSelfGift || (senderId && receiverId !== senderId))) {
+      try {
+        savedNotification = await Notification.create({
+          userId: giftData.receiverId,
+          type: notificationType,
+          title: senderName,
+          description: notificationBody,
+          senderId: senderData?._id,
+          senderName: senderName,
+          senderImage: senderData?.image,
+          giftId: giftData._id,
+          messageId: messageData?._id,
+          conversationId: giftData.conversationId,
+          isSeen: false,
+          isOpened: false,
+        });
+        console.log(
+          `✅ Notification saved to database for ${notificationType}`
+        );
+        emitRealtimeNotification(savedNotification);
+      } catch (error) {
+        console.error(
+          "❌ Error saving notification to database:",
+          error.message
+        );
+      }
+    } else {
+      console.log(
+        `⚠️ Skipping notification - receiverId (${receiverId}) is same as senderId (${senderId}) and not a self-gift`
+      );
     }
   }
 

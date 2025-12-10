@@ -221,14 +221,24 @@ exports.editUser = asyncHandler(async (req, res, next) => {
   // Support both :id and :userId route parameters
   const { id, userId } = req.params;
   const targetUserId = id || userId;
-  const { fullName, number, gender, birthDate, image, defaultGiftMode } =
-    req.body;
+  const {
+    fullName,
+    number,
+    gender,
+    birthDate,
+    image,
+    defaultGiftMode,
+    active,
+  } = req.body;
 
   // Check if the requester is admin or onboarding_agent
   const isAdminOrAgent =
     req.user &&
     req.user.role &&
     (req.user.role === "admin" || req.user.role === "onboarding_agent");
+
+  // Check if the requester is specifically an admin
+  const isAdmin = req.user && req.user.role && req.user.role === "admin";
 
   // Check if the requester is specifically an onboarding_agent
   const isOnboardingAgent =
@@ -242,16 +252,74 @@ exports.editUser = asyncHandler(async (req, res, next) => {
     birthDate,
     image,
     defaultGiftMode,
+    active,
     isAdminOrAgent,
+    isAdmin,
     isOnboardingAgent,
   });
 
-  const user = await User.findById(targetUserId);
+  let user = await User.findById(targetUserId);
 
+  // If user doesn't exist, only admins can create users without OTP
   if (!user) {
-    const err = new Error("User not found");
-    err.statusCode = 404;
-    return next(err);
+    if (!isAdmin) {
+      const err = new Error(
+        "User not found. Only admins can create users without OTP."
+      );
+      err.statusCode = 403;
+      return next(err);
+    }
+
+    // Admin can create a new user without OTP
+    if (!number) {
+      const err = new Error("Phone number is required to create a new user");
+      err.statusCode = 400;
+      return next(err);
+    }
+
+    const normalizedNumber = normalizePhoneNumber(number);
+    if (!normalizedNumber) {
+      const err = new Error("A valid 10-digit phone number is required");
+      err.statusCode = 400;
+      return next(err);
+    }
+
+    // Check if user with this number already exists
+    const existingUser = await User.findOne({ number: normalizedNumber });
+    if (existingUser) {
+      const err = new Error("User with this phone number already exists");
+      err.statusCode = 400;
+      return next(err);
+    }
+
+    // Create new user - admins can set active to true without OTP
+    user = await User.create({
+      fullName: fullName ? fullName.trim() : "",
+      number: normalizedNumber,
+      gender: gender ? gender.toLowerCase() : undefined,
+      birthDate: birthDate ? new Date(birthDate) : undefined,
+      image: image || undefined,
+      defaultGiftMode: defaultGiftMode
+        ? defaultGiftMode.toLowerCase()
+        : undefined,
+      active: active === true, // Only admins can set this
+    });
+
+    try {
+      await ensureUserQr(user);
+    } catch (e) {
+      console.error("QR generation failed (user creation):", e.message);
+    }
+
+    console.log(
+      `✅ New user created by admin ${req.user._id} without OTP: ${user._id}`
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: "User created successfully without OTP",
+      user,
+    });
   }
 
   // If onboarding agent, verify they can edit this user
@@ -350,6 +418,21 @@ exports.editUser = asyncHandler(async (req, res, next) => {
       return next(err);
     }
     user.defaultGiftMode = normalizedMode;
+  }
+
+  // Only admins can activate users without OTP verification
+  if (active !== undefined && active !== null) {
+    if (!isAdmin) {
+      const err = new Error(
+        "Only admins can activate users without OTP verification"
+      );
+      err.statusCode = 403;
+      return next(err);
+    }
+    user.active = active === true;
+    console.log(
+      `✅ User ${user._id} active status set to ${user.active} by admin ${req.user._id}`
+    );
   }
 
   // Track which onboarding agent onboarded/touched this user
