@@ -12,6 +12,10 @@ const kycSchema = new mongoose.Schema({
     required: true,
     enum: ["aadhaar", "pan", "driving_license", "voter_id", "passport"],
   },
+  govtIdNumber: {
+    type: String,
+    required: true,
+  },
   frontPic: {
     type: String,
     required: true,

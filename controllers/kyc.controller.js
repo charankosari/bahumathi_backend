@@ -4,13 +4,21 @@ const uploader = new Uploader();
 
 exports.submitKyc = async (req, res, next) => {
   try {
-    const { idType, frontPic, backPic, selfie } = req.body;
+    const { idType, frontPic, backPic, selfie, govtIdNumber } = req.body;
     const userId = req.user.id;
 
     if (!frontPic || !backPic || !selfie) {
       return res.status(400).json({
         success: false,
-        message: "Please provide all required image keys: frontPic, backPic, and selfie.",
+        message:
+          "Please provide all required image keys: frontPic, backPic, and selfie.",
+      });
+    }
+
+    if (!govtIdNumber || govtIdNumber.trim() === "") {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide your government ID number.",
       });
     }
 
@@ -26,6 +34,7 @@ exports.submitKyc = async (req, res, next) => {
     if (kyc) {
       // Update existing rejected KYC
       kyc.idType = idType;
+      kyc.govtIdNumber = govtIdNumber.trim();
       kyc.frontPic = frontPic;
       kyc.backPic = backPic;
       kyc.selfie = selfie;
@@ -37,6 +46,7 @@ exports.submitKyc = async (req, res, next) => {
       kyc = await Kyc.create({
         user: userId,
         idType,
+        govtIdNumber: govtIdNumber.trim(),
         frontPic,
         backPic,
         selfie,
