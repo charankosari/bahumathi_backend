@@ -23,8 +23,20 @@ async function fetchPresignedUrlForKey(key) {
   }
 }
 
+// Helper function to normalize phone numbers for comparison
+const normalizePhoneNumber = (rawNumber) => {
+  if (!rawNumber) return null;
+  const str = String(rawNumber).replace(/\D/g, ""); // Remove non-digits
+  if (str.length >= 10) {
+    return str.slice(-10); // Get last 10 digits
+  }
+  return null;
+};
+
 exports.getConversations = async (req, res, next) => {
   try {
+    const currentUserId = req.user.id.toString();
+
     // Get conversations where user is a participant OR sender with phone number
     const conversations = await Conversation.find({
       $or: [
@@ -36,35 +48,74 @@ exports.getConversations = async (req, res, next) => {
       .populate("senderId", "fullName image number")
       .sort({ updatedAt: -1 });
 
+    console.log(
+      `📋 Found ${conversations.length} conversations for user ${currentUserId}`
+    );
+
+    // Get current user's phone number for comparison
+    const currentUserNumber = normalizePhoneNumber(req.user.number);
+
     // Filter out self-gift conversations (where both participants are the same user)
     const filteredConversations = conversations.filter((convo) => {
       const convoObj = convo.toObject();
+      const convoId = convoObj._id?.toString();
 
       // If this conversation is for a phone-number (no-account) recipient
       if (convoObj.receiverNumber) {
+        const normalizedReceiverNumber = normalizePhoneNumber(
+          convoObj.receiverNumber
+        );
+
         // Check if receiverNumber matches sender's number (self-gift)
-        // This is the primary check - if receiverNumber matches sender's number, it's a self-gift
         if (
           convoObj.senderId &&
           typeof convoObj.senderId === "object" &&
           convoObj.senderId.number
         ) {
-          if (convoObj.senderId.number === convoObj.receiverNumber) {
+          const normalizedSenderNumber = normalizePhoneNumber(
+            convoObj.senderId.number
+          );
+          if (
+            normalizedSenderNumber &&
+            normalizedReceiverNumber &&
+            normalizedSenderNumber === normalizedReceiverNumber
+          ) {
             console.log(
-              `🚫 Filtering out self-gift conversation (receiverNumber matches sender): ${convoObj._id}`
+              `🚫 Filtering out self-gift conversation (receiverNumber matches sender): ${convoId}`
             );
             return false;
           }
         }
+
+        // Check if receiverNumber matches current user's number (self-gift)
+        if (
+          currentUserNumber &&
+          normalizedReceiverNumber &&
+          currentUserNumber === normalizedReceiverNumber
+        ) {
+          console.log(
+            `🚫 Filtering out self-gift conversation (receiverNumber matches current user): ${convoId}`
+          );
+          return false;
+        }
+
         // Also check if receiverNumber matches any participant's number (self-gift)
         if (convoObj.participants && convoObj.participants.length > 0) {
           for (const participant of convoObj.participants) {
-            if (participant?.number === convoObj.receiverNumber) {
-              // This is a self-gift conversation, filter it out
-              console.log(
-                `🚫 Filtering out self-gift conversation (receiverNumber matches participant): ${convoObj._id}`
+            if (participant?.number) {
+              const normalizedParticipantNumber = normalizePhoneNumber(
+                participant.number
               );
-              return false;
+              if (
+                normalizedParticipantNumber &&
+                normalizedReceiverNumber &&
+                normalizedParticipantNumber === normalizedReceiverNumber
+              ) {
+                console.log(
+                  `🚫 Filtering out self-gift conversation (receiverNumber matches participant): ${convoId}`
+                );
+                return false;
+              }
             }
           }
         }
@@ -75,19 +126,45 @@ exports.getConversations = async (req, res, next) => {
       // If it's a conversation with participants array
       if (convoObj.participants && convoObj.participants.length > 0) {
         // Check if all participants are the same user (self-conversation)
+        // Convert all IDs to strings for consistent comparison
         const uniqueParticipantIds = [
           ...new Set(
-            convoObj.participants.map((p) => p._id || p).filter(Boolean)
+            convoObj.participants
+              .map((p) => {
+                if (!p) return null;
+                // Handle both populated (object with _id) and non-populated (just ObjectId) cases
+                const id = p._id || p;
+                return id ? id.toString() : null;
+              })
+              .filter(Boolean)
           ),
         ];
-        if (uniqueParticipantIds.length === 1) {
-          console.log(`🚫 Filtering out self-conversation: ${convoObj._id}`);
+
+        // Only filter if there's exactly one unique participant AND it's the current user
+        if (
+          uniqueParticipantIds.length === 1 &&
+          uniqueParticipantIds[0] === currentUserId
+        ) {
+          console.log(
+            `🚫 Filtering out self-conversation: ${convoId} (participant: ${uniqueParticipantIds[0]})`
+          );
           return false; // Filter out self-conversations
         }
+
+        // If there are multiple participants or the single participant is not the current user, keep it
+        return true;
       }
 
+      // If no participants and no receiverNumber, this might be an edge case - keep it for now
+      console.log(
+        `⚠️ Conversation ${convoId} has no participants and no receiverNumber - keeping it`
+      );
       return true; // Keep regular conversations
     });
+
+    console.log(
+      `✅ After filtering: ${filteredConversations.length} conversations remaining`
+    );
 
     // Decrypt + add presigned media if needed
     const decryptedConversations = await Promise.all(
