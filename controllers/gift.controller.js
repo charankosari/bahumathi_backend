@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
 const Gift = require("../models/Gift");
-const User = require("../models/User");
+const User = require("../models/user.model");
 const asyncHandler = require("../middlewares/asyncHandler");
 const { getIO } = require("../server");
 const {
