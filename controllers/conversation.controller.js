@@ -36,12 +36,19 @@ const normalizePhoneNumber = (rawNumber) => {
 exports.getConversations = async (req, res, next) => {
   try {
     const currentUserId = req.user.id.toString();
+    const currentUserObjectId = req.user.id;
+
+    console.log(`🔍 [DEBUG] Getting conversations for user: ${currentUserId}`);
+    console.log(
+      `   User object ID type: ${currentUserObjectId.constructor.name}`
+    );
 
     // Get conversations where user is a participant OR sender with phone number
+    // Using $in for participants to ensure we catch all conversations where user is involved
     const conversations = await Conversation.find({
       $or: [
-        { participants: req.user.id },
-        { senderId: req.user.id, receiverNumber: { $exists: true } },
+        { participants: { $in: [currentUserObjectId] } },
+        { senderId: currentUserObjectId, receiverNumber: { $exists: true } },
       ],
     })
       .populate("participants", "fullName image number")
@@ -49,8 +56,27 @@ exports.getConversations = async (req, res, next) => {
       .sort({ updatedAt: -1 });
 
     console.log(
-      `📋 Found ${conversations.length} conversations for user ${currentUserId}`
+      `📋 [DEBUG] Found ${conversations.length} conversations for user ${currentUserId}`
     );
+
+    // Debug: Log each conversation found
+    conversations.forEach((convo, index) => {
+      const convoObj = convo.toObject();
+      console.log(
+        `📨 [DEBUG] Conversation ${index + 1}/${conversations.length}:`
+      );
+      console.log(`   ID: ${convoObj._id}`);
+      console.log(
+        `   Participants: ${JSON.stringify(
+          convoObj.participants?.map((p) => p?._id || p)
+        )}`
+      );
+      console.log(
+        `   SenderId: ${convoObj.senderId?._id || convoObj.senderId}`
+      );
+      console.log(`   ReceiverNumber: ${convoObj.receiverNumber}`);
+      console.log(`   UpdatedAt: ${convoObj.updatedAt}`);
+    });
 
     // Get current user's phone number for comparison
     const currentUserNumber = normalizePhoneNumber(req.user.number);
