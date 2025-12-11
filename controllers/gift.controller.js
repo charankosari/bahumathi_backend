@@ -1,11 +1,13 @@
 const mongoose = require("mongoose");
 const Gift = require("../models/Gift");
+const User = require("../models/User");
 const asyncHandler = require("../middlewares/asyncHandler");
 const { getIO } = require("../server");
 const {
   allocateGift,
   getUserAllocationSummary,
 } = require("../services/giftAllocation.service");
+const { sendAllocationNotification } = require("../services/fcm.service");
 
 /**
  * Allocate money from user's unallotted money to gold or stock
@@ -50,6 +52,36 @@ exports.allocateGift = asyncHandler(async (req, res, next) => {
 
     // Commit transaction
     await session.commitTransaction();
+
+    // Get gift details for notification (outside transaction)
+    let giftDetails = null;
+    if (giftId) {
+      giftDetails = await Gift.findById(giftId).select("type name");
+    }
+
+    // Send allocation notification to user
+    try {
+      const user = await User.findById(userId).select("fcmToken fullName");
+      if (user && user.fcmToken) {
+        await sendAllocationNotification(
+          user.fcmToken,
+          {
+            allocationType: allocationType,
+            amount: amount,
+            giftType: giftDetails?.type || allocationType,
+            giftName: giftDetails?.name,
+          },
+          user
+        );
+        console.log(`✅ Allocation notification sent to user ${userId}`);
+      }
+    } catch (notificationError) {
+      console.error(
+        "Error sending allocation notification:",
+        notificationError
+      );
+      // Don't fail the request if notification fails
+    }
 
     // Emit socket events to notify both sender and receiver (outside transaction)
     try {

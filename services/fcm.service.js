@@ -609,6 +609,83 @@ const sendGiftWithMessageNotification = async (
 };
 
 /**
+ * Send notification when a gift is allocated
+ * @param {string} fcmToken - FCM token of the user
+ * @param {Object} allocationData - Allocation data
+ * @param {Object} userData - User data
+ * @returns {Promise<Object>}
+ */
+const sendAllocationNotification = async (
+  fcmToken,
+  allocationData,
+  userData
+) => {
+  const allocationType = allocationData?.allocationType || "gold";
+  const amount = allocationData?.amount || 0;
+  const giftType = allocationData?.giftType || allocationType;
+  const giftName = allocationData?.giftName;
+
+  // Determine gift type name
+  let giftTypeName;
+  if (giftName && giftName.trim() !== "") {
+    giftTypeName = giftName;
+  } else if (giftType === "stock" || giftType === "top50") {
+    giftTypeName = "Top 50 Companies";
+  } else {
+    giftTypeName = "Digital Gold";
+  }
+
+  // Format notification: "gold 24" or "top 50 companies 24"
+  const notificationTitle = giftTypeName;
+  const notificationBody = `you allocated a gift`;
+  const notificationType = "selfGift"; // Use selfGift type for allocation notifications
+
+  // Save notification to database
+  let savedNotification = null;
+  try {
+    savedNotification = await Notification.create({
+      userId: userData?._id || userData?.id,
+      type: notificationType,
+      title: notificationTitle,
+      description: notificationBody,
+      metadata: {
+        giftType: giftType,
+        giftName: giftName,
+        amount: amount,
+        allocationType: allocationType,
+      },
+    });
+    console.log(`✅ Allocation notification saved to database`);
+    emitRealtimeNotification(savedNotification);
+  } catch (error) {
+    console.error(
+      "❌ Error saving allocation notification to database:",
+      error.message
+    );
+  }
+
+  // Send push notification
+  const notificationResult = await sendPushNotification(
+    fcmToken,
+    {
+      title: notificationTitle,
+      body: notificationBody,
+    },
+    {
+      type: notificationType,
+      notificationId: savedNotification?._id?.toString() || "",
+      giftType: giftType,
+      amount: amount.toString(),
+      allocationType: allocationType,
+      giftName: giftName || "",
+      appName: "Bahumati",
+    }
+  );
+
+  return notificationResult;
+};
+
+/**
  * Send notification for withdrawal rejection
  * @param {string} fcmToken - FCM token of the user
  * @param {Object} withdrawalData - Withdrawal request data
@@ -680,6 +757,7 @@ module.exports = {
   sendMessageNotification,
   sendGiftNotification,
   sendGiftWithMessageNotification,
+  sendAllocationNotification,
   sendWithdrawalRejectionNotification,
   initializeFirebase,
 };

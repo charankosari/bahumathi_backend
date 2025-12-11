@@ -1031,56 +1031,8 @@ function initChatSocket(io) {
         // *** COMMIT THE TRANSACTION ***
         await session.commitTransaction();
 
-        // Add gift money to user's unallotted money (for registered users only)
-        // Do this outside transaction to avoid long-running transactions
-        if (giftRecord) {
-          try {
-            // Check if receiver is a registered User (not UserWithNoAccount)
-            const isUserWithNoAccount = await UserWithNoAccount.findById(
-              actualReceiverId
-            );
-
-            if (!isUserWithNoAccount) {
-              // Receiver is a registered user - add to UserHistory
-              await addGiftToUserHistory({
-                giftId: giftRecord._id,
-                userId: actualReceiverId,
-                amount: giftRecord.valueInINR,
-                senderId: senderId,
-              });
-              console.log(
-                `✅ Added ₹${giftRecord.valueInINR} to user ${actualReceiverId}'s unallotted money`
-              );
-
-              // Auto-allot self gifts immediately after adding to UserHistory
-              if (isSelfGift && String(senderId) === String(actualReceiverId)) {
-                try {
-                  const allocationType = giftRecord.type; // Allocate as the same type (gold or stock)
-                  await allocateGift({
-                    giftId: giftRecord._id,
-                    userId: String(actualReceiverId),
-                    allocationType: allocationType,
-                    amount: giftRecord.valueInINR, // Allocate full amount
-                  });
-                  console.log(
-                    `✅ Auto-allotted self gift ${giftRecord._id} as ${allocationType}`
-                  );
-                } catch (allocationError) {
-                  console.error(
-                    `❌ Error auto-allotting self gift: ${allocationError.message}`
-                  );
-                  // Don't fail if auto-allocation fails
-                }
-              }
-            }
-          } catch (historyError) {
-            console.error(
-              "Error adding gift to user history:",
-              historyError.message
-            );
-            // Don't fail if history update fails
-          }
-        }
+        // NOTE: Gift is already added to UserHistory inside the transaction (lines 490/515)
+        // No need to add it again here to avoid double-counting
 
         // --- EMIT SOCKET EVENTS (Only if transaction was successful and conversation exists) ---
         if (conversation && newMessage) {
