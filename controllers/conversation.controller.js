@@ -80,11 +80,29 @@ exports.getConversations = async (req, res, next) => {
 
     // Get current user's phone number for comparison
     const currentUserNumber = normalizePhoneNumber(req.user.number);
+    console.log(
+      `📱 [DEBUG] Current user number: ${req.user.number} (normalized: ${currentUserNumber})`
+    );
 
     // Filter out self-gift conversations (where both participants are the same user)
+    console.log(
+      `🔍 [DEBUG] Starting filtering process on ${conversations.length} conversations...`
+    );
+    let filteredOutCount = 0;
     const filteredConversations = conversations.filter((convo) => {
       const convoObj = convo.toObject();
       const convoId = convoObj._id?.toString();
+
+      console.log(`🔎 [DEBUG] Checking conversation: ${convoId}`);
+      console.log(`   ReceiverNumber: ${convoObj.receiverNumber}`);
+      console.log(
+        `   Participants: ${JSON.stringify(
+          convoObj.participants?.map((p) => p?._id || p)
+        )}`
+      );
+      console.log(
+        `   SenderId: ${convoObj.senderId?._id || convoObj.senderId}`
+      );
 
       // If this conversation is for a phone-number (no-account) recipient
       if (convoObj.receiverNumber) {
@@ -106,8 +124,9 @@ exports.getConversations = async (req, res, next) => {
             normalizedReceiverNumber &&
             normalizedSenderNumber === normalizedReceiverNumber
           ) {
+            filteredOutCount++;
             console.log(
-              `🚫 Filtering out self-gift conversation (receiverNumber matches sender): ${convoId}`
+              `🚫 [DEBUG] Filtering out self-gift conversation (receiverNumber matches sender): ${convoId}`
             );
             return false;
           }
@@ -119,8 +138,9 @@ exports.getConversations = async (req, res, next) => {
           normalizedReceiverNumber &&
           currentUserNumber === normalizedReceiverNumber
         ) {
+          filteredOutCount++;
           console.log(
-            `🚫 Filtering out self-gift conversation (receiverNumber matches current user): ${convoId}`
+            `🚫 [DEBUG] Filtering out self-gift conversation (receiverNumber matches current user): ${convoId}`
           );
           return false;
         }
@@ -137,8 +157,9 @@ exports.getConversations = async (req, res, next) => {
                 normalizedReceiverNumber &&
                 normalizedParticipantNumber === normalizedReceiverNumber
               ) {
+                filteredOutCount++;
                 console.log(
-                  `🚫 Filtering out self-gift conversation (receiverNumber matches participant): ${convoId}`
+                  `🚫 [DEBUG] Filtering out self-gift conversation (receiverNumber matches participant): ${convoId}`
                 );
                 return false;
               }
@@ -146,6 +167,9 @@ exports.getConversations = async (req, res, next) => {
           }
         }
         // Keep conversations with non-registered users (receiverNumber exists but doesn't match sender/participants)
+        console.log(
+          `✅ [DEBUG] Keeping conversation with non-registered user: ${convoId}`
+        );
         return true;
       }
 
@@ -171,25 +195,29 @@ exports.getConversations = async (req, res, next) => {
           uniqueParticipantIds.length === 1 &&
           uniqueParticipantIds[0] === currentUserId
         ) {
+          filteredOutCount++;
           console.log(
-            `🚫 Filtering out self-conversation: ${convoId} (participant: ${uniqueParticipantIds[0]})`
+            `🚫 [DEBUG] Filtering out self-conversation: ${convoId} (participant: ${uniqueParticipantIds[0]})`
           );
           return false; // Filter out self-conversations
         }
 
         // If there are multiple participants or the single participant is not the current user, keep it
+        console.log(
+          `✅ [DEBUG] Keeping conversation with participants: ${convoId} (unique participants: ${uniqueParticipantIds.length})`
+        );
         return true;
       }
 
       // If no participants and no receiverNumber, this might be an edge case - keep it for now
       console.log(
-        `⚠️ Conversation ${convoId} has no participants and no receiverNumber - keeping it`
+        `⚠️ [DEBUG] Conversation ${convoId} has no participants and no receiverNumber - keeping it`
       );
       return true; // Keep regular conversations
     });
 
     console.log(
-      `✅ After filtering: ${filteredConversations.length} conversations remaining`
+      `✅ [DEBUG] After filtering: ${filteredConversations.length} conversations remaining (${filteredOutCount} filtered out)`
     );
 
     // Decrypt + add presigned media if needed
