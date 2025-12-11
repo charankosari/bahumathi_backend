@@ -104,7 +104,44 @@ exports.getConversations = async (req, res, next) => {
         `   SenderId: ${convoObj.senderId?._id || convoObj.senderId}`
       );
 
+      // First, check if it's a self-conversation based on participants
+      // This check should happen BEFORE checking receiverNumber
+      if (convoObj.participants && convoObj.participants.length > 0) {
+        const uniqueParticipantIds = [
+          ...new Set(
+            convoObj.participants
+              .map((p) => {
+                if (!p) return null;
+                const id = p._id || p;
+                return id ? id.toString() : null;
+              })
+              .filter(Boolean)
+          ),
+        ];
+
+        // If there are multiple unique participants, it's a legitimate conversation - KEEP IT
+        if (uniqueParticipantIds.length > 1) {
+          console.log(
+            `✅ [DEBUG] Keeping conversation with multiple participants: ${convoId} (participants: ${uniqueParticipantIds.length})`
+          );
+          return true;
+        }
+
+        // If there's only one unique participant AND it's the current user, it's a self-conversation
+        if (
+          uniqueParticipantIds.length === 1 &&
+          uniqueParticipantIds[0] === currentUserId
+        ) {
+          filteredOutCount++;
+          console.log(
+            `🚫 [DEBUG] Filtering out self-conversation: ${convoId} (participant: ${uniqueParticipantIds[0]})`
+          );
+          return false;
+        }
+      }
+
       // If this conversation is for a phone-number (no-account) recipient
+      // Only filter if receiverNumber matches AND it's actually a self-gift
       if (convoObj.receiverNumber) {
         const normalizedReceiverNumber = normalizePhoneNumber(
           convoObj.receiverNumber
@@ -132,12 +169,35 @@ exports.getConversations = async (req, res, next) => {
           }
         }
 
-        // Check if receiverNumber matches current user's number (self-gift)
+        // Only filter if receiverNumber matches current user AND there are no valid participants
+        // (meaning it's truly a self-gift, not a conversation between two users)
         if (
           currentUserNumber &&
           normalizedReceiverNumber &&
           currentUserNumber === normalizedReceiverNumber
         ) {
+          // Double-check: if there are participants with different users, don't filter
+          if (convoObj.participants && convoObj.participants.length > 0) {
+            const uniqueParticipantIds = [
+              ...new Set(
+                convoObj.participants
+                  .map((p) => {
+                    if (!p) return null;
+                    const id = p._id || p;
+                    return id ? id.toString() : null;
+                  })
+                  .filter(Boolean)
+              ),
+            ];
+            // If there are multiple participants, it's a real conversation - keep it
+            if (uniqueParticipantIds.length > 1) {
+              console.log(
+                `✅ [DEBUG] Keeping conversation (receiverNumber matches but has multiple participants): ${convoId}`
+              );
+              return true;
+            }
+          }
+          // Only filter if it's truly a self-gift (receiverNumber matches AND no multiple participants)
           filteredOutCount++;
           console.log(
             `🚫 [DEBUG] Filtering out self-gift conversation (receiverNumber matches current user): ${convoId}`
@@ -145,44 +205,21 @@ exports.getConversations = async (req, res, next) => {
           return false;
         }
 
-        // Also check if receiverNumber matches any participant's number (self-gift)
-        if (convoObj.participants && convoObj.participants.length > 0) {
-          for (const participant of convoObj.participants) {
-            if (participant?.number) {
-              const normalizedParticipantNumber = normalizePhoneNumber(
-                participant.number
-              );
-              if (
-                normalizedParticipantNumber &&
-                normalizedReceiverNumber &&
-                normalizedParticipantNumber === normalizedReceiverNumber
-              ) {
-                filteredOutCount++;
-                console.log(
-                  `🚫 [DEBUG] Filtering out self-gift conversation (receiverNumber matches participant): ${convoId}`
-                );
-                return false;
-              }
-            }
-          }
-        }
-        // Keep conversations with non-registered users (receiverNumber exists but doesn't match sender/participants)
+        // Keep conversations with non-registered users (receiverNumber exists but doesn't match)
         console.log(
           `✅ [DEBUG] Keeping conversation with non-registered user: ${convoId}`
         );
         return true;
       }
 
-      // If it's a conversation with participants array
+      // If we reach here, it's a conversation without receiverNumber
+      // Check participants one more time (should have been checked above, but just in case)
       if (convoObj.participants && convoObj.participants.length > 0) {
-        // Check if all participants are the same user (self-conversation)
-        // Convert all IDs to strings for consistent comparison
         const uniqueParticipantIds = [
           ...new Set(
             convoObj.participants
               .map((p) => {
                 if (!p) return null;
-                // Handle both populated (object with _id) and non-populated (just ObjectId) cases
                 const id = p._id || p;
                 return id ? id.toString() : null;
               })
@@ -190,23 +227,24 @@ exports.getConversations = async (req, res, next) => {
           ),
         ];
 
-        // Only filter if there's exactly one unique participant AND it's the current user
-        if (
-          uniqueParticipantIds.length === 1 &&
-          uniqueParticipantIds[0] === currentUserId
-        ) {
-          filteredOutCount++;
+        // If there are multiple participants, keep it
+        if (uniqueParticipantIds.length > 1) {
           console.log(
-            `🚫 [DEBUG] Filtering out self-conversation: ${convoId} (participant: ${uniqueParticipantIds[0]})`
+            `✅ [DEBUG] Keeping conversation with multiple participants: ${convoId}`
           );
-          return false; // Filter out self-conversations
+          return true;
         }
 
-        // If there are multiple participants or the single participant is not the current user, keep it
-        console.log(
-          `✅ [DEBUG] Keeping conversation with participants: ${convoId} (unique participants: ${uniqueParticipantIds.length})`
-        );
-        return true;
+        // If single participant is not current user, keep it
+        if (
+          uniqueParticipantIds.length === 1 &&
+          uniqueParticipantIds[0] !== currentUserId
+        ) {
+          console.log(
+            `✅ [DEBUG] Keeping conversation with other participant: ${convoId}`
+          );
+          return true;
+        }
       }
 
       // If no participants and no receiverNumber, this might be an edge case - keep it for now
