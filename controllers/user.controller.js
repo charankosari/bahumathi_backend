@@ -363,6 +363,9 @@ exports.editUser = asyncHandler(async (req, res, next) => {
   // Support both :id and :userId route parameters
   const { id, userId } = req.params;
   const targetUserId = id || userId;
+
+  // Handle case where req.body might be undefined
+  const body = req.body || {};
   const {
     fullName,
     number,
@@ -371,7 +374,7 @@ exports.editUser = asyncHandler(async (req, res, next) => {
     image,
     defaultGiftMode,
     active,
-  } = req.body;
+  } = body;
 
   // Check if the requester is admin or onboarding_agent
   const isAdminOrAgent =
