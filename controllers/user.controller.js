@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const User = require("../models/user.model");
+const Kyc = require("../models/Kyc");
 const asyncHandler = require("../middlewares/asyncHandler");
 const sendJwtToken = require("../utils/sendJwtToken");
 const crypto = require("crypto");
@@ -374,6 +375,11 @@ exports.editUser = asyncHandler(async (req, res, next) => {
     image,
     defaultGiftMode,
     active,
+    // KYC fields (for admin/agent to create and approve KYC directly)
+    frontPic,
+    backPic,
+    selfie,
+    idType,
   } = body;
 
   // Check if the requester is admin or onboarding_agent
@@ -405,9 +411,11 @@ exports.editUser = asyncHandler(async (req, res, next) => {
 
   let user = await User.findById(targetUserId);
 
-  // VALIDATION: If user exists and is a regular user (not admin/agent),
-  // they must provide all three fields (fullName, gender, birthDate) together
+  // VALIDATION: Only regular users (not admin/agent) must provide all three fields together
+  // Admins and onboarding agents can update fields individually using their own token
   if (user && !isAdminOrAgent) {
+    // This is a regular user editing their own profile
+    // They must provide all personal details together
     const isUpdatingPersonalDetails =
       fullName !== undefined || gender !== undefined || birthDate !== undefined;
 
@@ -432,6 +440,9 @@ exports.editUser = asyncHandler(async (req, res, next) => {
       }
     }
   }
+
+  // Admins and onboarding agents can update fields individually
+  // No validation required - they can update any field separately
 
   // If user doesn't exist, only admins can create users without OTP
   if (!user) {
@@ -615,6 +626,57 @@ exports.editUser = asyncHandler(async (req, res, next) => {
   }
 
   await user.save({ validateBeforeSave: false });
+
+  // If admin/agent provided KYC fields, create and approve KYC automatically
+  if (isAdminOrAgent && frontPic && backPic && selfie && idType) {
+    try {
+      // Validate idType
+      const allowedIdTypes = [
+        "aadhaar",
+        "pan",
+        "driving_license",
+        "voter_id",
+        "passport",
+      ];
+      if (!allowedIdTypes.includes(idType)) {
+        console.warn(`⚠️ Invalid idType: ${idType}, skipping KYC creation`);
+      } else {
+        // Check if KYC already exists
+        let kyc = await Kyc.findOne({ user: targetUserId });
+
+        if (kyc) {
+          // Update existing KYC and approve it
+          kyc.idType = idType;
+          kyc.frontPic = frontPic;
+          kyc.backPic = backPic;
+          kyc.selfie = selfie;
+          kyc.status = "approved";
+          kyc.rejectionReason = "";
+          await kyc.save();
+          console.log(
+            `✅ KYC updated and approved for user ${targetUserId} by ${req.user.role} ${req.user._id}`
+          );
+        } else {
+          // Create new KYC and approve it
+          kyc = await Kyc.create({
+            user: targetUserId,
+            idType,
+            frontPic,
+            backPic,
+            selfie,
+            status: "approved", // Auto-approve when created by admin/agent
+          });
+          console.log(
+            `✅ KYC created and approved for user ${targetUserId} by ${req.user.role} ${req.user._id}`
+          );
+        }
+      }
+    } catch (kycError) {
+      console.error("❌ Error creating/approving KYC:", kycError.message);
+      // Don't fail the user update if KYC creation fails
+    }
+  }
+
   console.log("✅ User updated", {
     id: user._id,
     fullName: user.fullName,
