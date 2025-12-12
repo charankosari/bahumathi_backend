@@ -24,7 +24,9 @@ router
   .get(
     roleAuthorize("admin", "reconciliation_agent", "onboarding_agent"),
     userController.getAllUsers
-  );
+  )
+  // Create user without OTP - Admin only
+  .post(roleAuthorize("admin"), userController.createUser);
 
 router
   .route("/users/find")

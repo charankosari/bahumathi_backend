@@ -198,6 +198,71 @@ exports.getUserDetails = asyncHandler(async (req, res, next) => {
   });
 });
 
+// ========== CREATE USER (Admin only - without OTP) ==========
+exports.createUser = asyncHandler(async (req, res, next) => {
+  const {
+    fullName,
+    number,
+    gender,
+    birthDate,
+    image,
+    defaultGiftMode,
+    active = true, // Default to active when created by admin
+  } = req.body;
+
+  // Validate phone number
+  if (!number) {
+    const err = new Error("Phone number is required");
+    err.statusCode = 400;
+    return next(err);
+  }
+
+  const normalizedNumber = normalizePhoneNumber(number);
+  if (!normalizedNumber) {
+    const err = new Error("A valid 10-digit phone number is required");
+    err.statusCode = 400;
+    return next(err);
+  }
+
+  // Check if user with this number already exists
+  const existingUser = await User.findOne({ number: normalizedNumber });
+  if (existingUser) {
+    const err = new Error("User with this phone number already exists");
+    err.statusCode = 400;
+    return next(err);
+  }
+
+  // Create new user - admins can set active to true without OTP
+  const user = await User.create({
+    fullName: fullName ? fullName.trim() : "",
+    number: normalizedNumber,
+    gender: gender ? gender.toLowerCase() : undefined,
+    birthDate: birthDate ? new Date(birthDate) : undefined,
+    image: image || undefined,
+    defaultGiftMode: defaultGiftMode
+      ? defaultGiftMode.toLowerCase()
+      : undefined,
+    active: active === true, // Only admins can set this
+    onboardedBy: req.user && req.user._id ? req.user._id : undefined,
+  });
+
+  try {
+    await ensureUserQr(user);
+  } catch (e) {
+    console.error("QR generation failed (user creation):", e.message);
+  }
+
+  console.log(
+    `✅ New user created by admin ${req.user._id} without OTP: ${user._id}`
+  );
+
+  res.status(201).json({
+    success: true,
+    message: "User created successfully without OTP",
+    user,
+  });
+});
+
 exports.deleteUser = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
 
