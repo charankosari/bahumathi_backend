@@ -37,11 +37,20 @@ router
   // Create user without OTP - Admin only
   .post(roleAuthorize("admin"), userController.createUser);
 
+// Find user by ID or number - POST with body
 router
-  .route("/users/find")
+  .route("/find-user")
   .post(
     roleAuthorize("admin", "reconciliation_agent", "onboarding_agent"),
     userController.getUserByIdOrNumber
+  );
+
+// Get all users - GET without body (uses query params for pagination)
+router
+  .route("/find-all-users")
+  .get(
+    roleAuthorize("admin", "reconciliation_agent", "onboarding_agent"),
+    userController.getAllUsers
   );
 
 // Get user transactions and withdrawals - Accessible by admin, reconciliation, and onboarding agents
@@ -53,6 +62,7 @@ router
   );
 
 // Edit user details - Accessible by admin and onboarding agents
+// NOTE: This must come AFTER /users/find to avoid matching "find" as a userId
 router
   .route("/users/:userId")
   .put(roleAuthorize("admin", "onboarding_agent"), userController.editUser);
