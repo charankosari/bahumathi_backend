@@ -209,7 +209,6 @@ exports.getUserTransactions = asyncHandler(async (req, res, next) => {
     });
   }
 
-  const mongoose = require("mongoose");
   const User = require("../models/user.model");
   const Gift = require("../models/Gift");
   const UserHistory = require("../models/UserHistory");
