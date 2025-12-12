@@ -198,6 +198,83 @@ exports.getUserDetails = asyncHandler(async (req, res, next) => {
   });
 });
 
+// ========== VERIFY OTP (Admin/Agent side - sets onboardedBy) ==========
+exports.verifyOtpForAdmin = asyncHandler(async (req, res, next) => {
+  const { number, otp } = req.body;
+
+  if (!otp) {
+    const err = new Error("OTP is required");
+    err.statusCode = 400;
+    return next(err);
+  }
+
+  const normalizedNumber = normalizePhoneNumber(number);
+  if (!normalizedNumber) {
+    const err = new Error("A valid 10-digit phone number is required");
+    err.statusCode = 400;
+    return next(err);
+  }
+
+  const user = await User.findOne({
+    number: normalizedNumber,
+    otpExpires: { $gt: Date.now() },
+  }).select("+otp");
+
+  if (!user) {
+    const err = new Error("Invalid number or OTP has expired");
+    err.statusCode = 400;
+    return next(err);
+  }
+
+  const isMatch = await user.compareOtp(otp);
+
+  if (!isMatch) {
+    const err = new Error("Invalid OTP");
+    err.statusCode = 400;
+    return next(err);
+  }
+
+  // Set onboardedBy to the admin/agent who verified
+  if (req.user && req.user._id) {
+    user.onboardedBy = req.user._id;
+    console.log(
+      `📝 User ${user._id} onboarded by admin/agent ${req.user._id} via OTP verification`
+    );
+  }
+
+  if (!user.active) {
+    user.active = true;
+  }
+
+  user.otp = undefined;
+  user.otpExpires = undefined;
+  await user.save({ validateBeforeSave: false });
+
+  try {
+    await ensureUserQr(user);
+  } catch (e) {
+    console.error("QR gen failed (verifyOtpForAdmin):", e.message);
+  }
+
+  // Process pending gifts for this user (if any)
+  if (user.number) {
+    try {
+      const result = await processPendingGiftsForUser(user._id, user.number);
+      console.log(
+        `✅ Processed ${result.giftsProcessed} pending gift(s) for user ${user._id}`
+      );
+    } catch (pendingGiftsError) {
+      console.error(
+        "Error processing pending gifts:",
+        pendingGiftsError.message
+      );
+      // Don't fail the verification if pending gifts processing fails
+    }
+  }
+
+  sendJwtToken(user, 200, "User verified and onboarded successfully", res);
+});
+
 // ========== CREATE USER (Admin only - without OTP) ==========
 exports.createUser = asyncHandler(async (req, res, next) => {
   const {

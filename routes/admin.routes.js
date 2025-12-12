@@ -12,13 +12,22 @@ const { isAuthorized, roleAuthorize } = require("../middlewares/auth");
 
 router.route("/login").post(login);
 
+// OTP verification route (before auth middleware - for admin/agent to verify user OTP)
+const userController = require("../controllers/user.controller");
+router
+  .route("/verify-user-otp")
+  .post(
+    isAuthorized,
+    roleAuthorize("admin", "onboarding_agent"),
+    userController.verifyOtpForAdmin
+  );
+
 // All routes are protected
 router.use(isAuthorized);
 
 router.route("/change-password").put(changePassword);
 
 // Get all users (paginated) - Accessible by admin, reconciliation, and onboarding agents
-const userController = require("../controllers/user.controller");
 router
   .route("/users")
   .get(
