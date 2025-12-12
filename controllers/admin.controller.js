@@ -141,7 +141,7 @@ exports.getAgents = asyncHandler(async (req, res, next) => {
 // Update agent details
 exports.updateAgent = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
-  const { name, role, password } = req.body;
+  const { name, role, password, status } = req.body;
 
   let agent = await Admin.findById(id);
 
@@ -165,6 +165,15 @@ exports.updateAgent = asyncHandler(async (req, res, next) => {
   }
   if (password) {
     agent.password = password; // Will be hashed by pre-save hook
+  }
+  if (status !== undefined) {
+    if (!["enabled", "disabled"].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid status. Must be 'enabled' or 'disabled'",
+      });
+    }
+    agent.status = status;
   }
 
   await agent.save();
