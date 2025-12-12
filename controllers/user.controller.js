@@ -1085,15 +1085,35 @@ exports.getAllUsers = asyncHandler(async (req, res, next) => {
     .skip(startIndex)
     .limit(limit);
 
+  // Get user IDs to fetch KYC status
+  const userIds = users.map((user) => user._id);
+
+  // Fetch all KYC records for these users
+  const kycs = await Kyc.find({ user: { $in: userIds } }).select("user status");
+
+  // Create a map of userId -> KYC status
+  const kycStatusMap = {};
+  kycs.forEach((kyc) => {
+    kycStatusMap[kyc.user.toString()] = kyc.status;
+  });
+
+  // Add KYC status to each user object
+  const usersWithKycStatus = users.map((user) => {
+    const userObj = user.toObject();
+    const kycStatus = kycStatusMap[user._id.toString()] || "not_created";
+    userObj.kycStatus = kycStatus;
+    return userObj;
+  });
+
   res.status(200).json({
     success: true,
-    count: users.length,
+    count: usersWithKycStatus.length,
     pagination: {
       total,
       page,
       limit,
       totalPages: Math.ceil(total / limit),
     },
-    users,
+    users: usersWithKycStatus,
   });
 });
