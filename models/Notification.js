@@ -20,6 +20,8 @@ const notificationSchema = new mongoose.Schema(
         "system",
         "withdrawalRejected",
         "withdrawalApproved",
+        "kycApproved",
+        "kycRejected",
       ],
       required: true,
     },

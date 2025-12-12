@@ -1,5 +1,10 @@
 const Kyc = require("../models/Kyc");
+const User = require("../models/user.model");
 const { Uploader } = require("../libs/s3/s3");
+const {
+  sendKycApprovalNotification,
+  sendKycRejectionNotification,
+} = require("../services/fcm.service");
 const uploader = new Uploader();
 
 exports.submitKyc = async (req, res, next) => {
@@ -126,6 +131,35 @@ exports.reviewKyc = async (req, res, next) => {
     }
 
     await kyc.save();
+
+    // Send notification to user about KYC status change (outside transaction)
+    try {
+      const user = await User.findById(kyc.user).select("fcmToken");
+
+      if (user && user.fcmToken) {
+        if (status === "approved") {
+          await sendKycApprovalNotification(user.fcmToken, kyc, user);
+          console.log(`✅ KYC approval notification sent to user ${user._id}`);
+        } else if (status === "rejected") {
+          await sendKycRejectionNotification(
+            user.fcmToken,
+            kyc,
+            rejectionReason
+          );
+          console.log(`✅ KYC rejection notification sent to user ${user._id}`);
+        }
+      } else {
+        console.log(
+          `⚠️ Cannot send notification: user or FCM token not found for user ${kyc.user}`
+        );
+      }
+    } catch (notificationError) {
+      // Don't fail the request if notification fails
+      console.error(
+        `❌ Error sending KYC ${status} notification:`,
+        notificationError.message
+      );
+    }
 
     res.status(200).json({
       success: true,

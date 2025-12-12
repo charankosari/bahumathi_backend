@@ -751,6 +751,119 @@ const sendWithdrawalRejectionNotification = async (
   return notificationResult;
 };
 
+/**
+ * Send notification for KYC approval
+ * @param {string} fcmToken - FCM token of the user
+ * @param {Object} kycData - KYC data
+ * @param {Object} userData - User data
+ * @returns {Promise<Object>}
+ */
+const sendKycApprovalNotification = async (fcmToken, kycData, userData) => {
+  const notificationTitle = "KYC Verification Approved";
+  const notificationBody =
+    "Congratulations! Your KYC verification has been approved.";
+
+  // Save notification to database first
+  let savedNotification = null;
+  if (kycData?.user) {
+    try {
+      savedNotification = await Notification.create({
+        userId: kycData.user,
+        type: "kycApproved",
+        title: notificationTitle,
+        description: notificationBody,
+        metadata: {
+          kycId: kycData._id?.toString() || "",
+          status: "approved",
+        },
+        isSeen: false,
+        isOpened: false,
+      });
+      console.log(`✅ Notification saved to database for KYC approval`);
+      emitRealtimeNotification(savedNotification);
+    } catch (error) {
+      console.error("❌ Error saving notification to database:", error.message);
+    }
+  }
+
+  const notificationResult = await sendPushNotification(
+    fcmToken,
+    {
+      title: notificationTitle,
+      body: notificationBody,
+    },
+    {
+      type: "kycApproved",
+      notificationId: savedNotification?._id?.toString() || "",
+      kycId: kycData?._id?.toString() || "",
+      status: "approved",
+      appName: "Bahumati",
+    }
+  );
+
+  return notificationResult;
+};
+
+/**
+ * Send notification for KYC rejection
+ * @param {string} fcmToken - FCM token of the user
+ * @param {Object} kycData - KYC data
+ * @param {string} rejectionReason - Reason for rejection
+ * @returns {Promise<Object>}
+ */
+const sendKycRejectionNotification = async (
+  fcmToken,
+  kycData,
+  rejectionReason
+) => {
+  const notificationTitle = "KYC Verification Rejected";
+  const notificationBody = `Your KYC verification has been rejected. ${
+    rejectionReason ? `Reason: ${rejectionReason}` : ""
+  }`;
+
+  // Save notification to database first
+  let savedNotification = null;
+  if (kycData?.user) {
+    try {
+      savedNotification = await Notification.create({
+        userId: kycData.user,
+        type: "kycRejected",
+        title: notificationTitle,
+        description: notificationBody,
+        metadata: {
+          kycId: kycData._id?.toString() || "",
+          status: "rejected",
+          rejectionReason: rejectionReason || "",
+        },
+        isSeen: false,
+        isOpened: false,
+      });
+      console.log(`✅ Notification saved to database for KYC rejection`);
+      emitRealtimeNotification(savedNotification);
+    } catch (error) {
+      console.error("❌ Error saving notification to database:", error.message);
+    }
+  }
+
+  const notificationResult = await sendPushNotification(
+    fcmToken,
+    {
+      title: notificationTitle,
+      body: notificationBody,
+    },
+    {
+      type: "kycRejected",
+      notificationId: savedNotification?._id?.toString() || "",
+      kycId: kycData?._id?.toString() || "",
+      status: "rejected",
+      rejectionReason: rejectionReason || "",
+      appName: "Bahumati",
+    }
+  );
+
+  return notificationResult;
+};
+
 module.exports = {
   sendPushNotification,
   sendMulticastPushNotification,
@@ -759,5 +872,7 @@ module.exports = {
   sendGiftWithMessageNotification,
   sendAllocationNotification,
   sendWithdrawalRejectionNotification,
+  sendKycApprovalNotification,
+  sendKycRejectionNotification,
   initializeFirebase,
 };
