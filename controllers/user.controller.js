@@ -325,6 +325,34 @@ exports.editUser = asyncHandler(async (req, res, next) => {
 
   let user = await User.findById(targetUserId);
 
+  // VALIDATION: If user exists and is a regular user (not admin/agent),
+  // they must provide all three fields (fullName, gender, birthDate) together
+  if (user && !isAdminOrAgent) {
+    const isUpdatingPersonalDetails =
+      fullName !== undefined || gender !== undefined || birthDate !== undefined;
+
+    if (isUpdatingPersonalDetails) {
+      // Check if all three required fields are provided
+      const hasAllFields =
+        fullName !== undefined &&
+        fullName !== null &&
+        fullName.toString().trim().length > 0 &&
+        gender !== undefined &&
+        gender !== null &&
+        gender.toString().trim().length > 0 &&
+        birthDate !== undefined &&
+        birthDate !== null;
+
+      if (!hasAllFields) {
+        const err = new Error(
+          "All personal details (Name, Gender, and Date of Birth) must be provided together. Cannot update fields individually."
+        );
+        err.statusCode = 400;
+        return next(err);
+      }
+    }
+  }
+
   // If user doesn't exist, only admins can create users without OTP
   if (!user) {
     if (!isAdmin) {
